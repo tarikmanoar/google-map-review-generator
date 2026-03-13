@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Maps AI Review</title>
+        <style>
+            :root {
+                --primary: #1a73e8;
+                --bg: #f8f9fa;
+                --text: #202124;
+                --border: #dadce0;
+                --radius: 8px;
+            }
+
+            body {
+                font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                width: 350px;
+                margin: 0;
+                padding: 16px;
+                background-color: var(--bg);
+                color: var(--text);
+            }
+
+            h2 {
+                font-size: 18px;
+                margin-top: 0;
+                margin-bottom: 16px;
+                color: var(--primary);
+                text-align: center;
+            }
+
+            .card {
+                background: white;
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                padding: 12px;
+                margin-bottom: 12px;
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            }
+
+            .field-group {
+                margin-bottom: 12px;
+            }
+
+            label {
+                display: block;
+                font-size: 12px;
+                font-weight: 600;
+                margin-bottom: 4px;
+                color: #5f6368;
+            }
+
+            input,
+            select,
+            textarea {
+                width: 100%;
+                box-sizing: border-box;
+                padding: 8px;
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                font-family: inherit;
+                font-size: 14px;
+            }
+
+            textarea {
+                resize: vertical;
+                min-height: 80px;
+            }
+
+            button {
+                width: 100%;
+                background-color: var(--primary);
+                color: white;
+                border: none;
+                padding: 10px;
+                border-radius: var(--radius);
+                font-weight: 600;
+                cursor: pointer;
+                transition: background 0.2s;
+            }
+
+            button:hover {
+                background-color: #1557b0;
+            }
+
+            button:disabled {
+                background-color: #a0c3ff;
+                cursor: not-allowed;
+            }
+
+            .place-info {
+                font-size: 13px;
+            }
+
+            .place-info strong {
+                display: block;
+                font-size: 15px;
+                margin-bottom: 4px;
+                color: var(--text);
+            }
+
+            .hidden {
+                display: none;
+            }
+
+            .error {
+                color: #d93025;
+                font-size: 12px;
+                margin-bottom: 12px;
+            }
+
+            .loader {
+                text-align: center;
+                font-size: 13px;
+                color: var(--primary);
+                display: none;
+                margin: 10px 0;
+            }
+        </style>
+    </head>
+
+    <body>
+        <h2>AI Review Generator</h2>
+
+        <div class="card">
+            <div class="field-group">
+                <label for="apiKey">Gemini API Key (Saved locally)</label>
+                <input type="password" id="apiKey" placeholder="Enter your Gemini API key...">
+            </div>
+        </div>
+
+        <div id="statusMessage" class="error hidden"></div>
+
+        <div id="placeCard" class="card hidden">
+            <label>Detected Place</label>
+            <div class="place-info">
+                <strong id="placeName">Loading...</strong>
+                <span id="placeAddress"></span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="field-group">
+                <label for="sentiment">Review Type</label>
+                <select id="sentiment">
+                    <option value="Positive">Positive (5 Stars)</option>
+                    <option value="Average">Average (3 Stars)</option>
+                    <option value="Negative">Negative (1 Star)</option>
+                    <option value="Funny">Funny & Witty</option>
+                </select>
+            </div>
+            <button id="generateBtn">Generate AI Review</button>
+            <div id="loader" class="loader">Generating with Gemini AI...</div>
+        </div>
+
+        <div id="resultsCard" class="card hidden">
+            <div class="field-group">
+                <label for="reviewOutput">Generated Review</label>
+                <textarea id="reviewOutput" readonly></textarea>
+            </div>
+            <div class="field-group">
+                <label for="promptOutput">Image Generation Prompt</label>
+                <textarea id="promptOutput" readonly></textarea>
+            </div>
+        </div>
+
+        <script src="popup.js"></script>
+    </body>
+
+</html>
