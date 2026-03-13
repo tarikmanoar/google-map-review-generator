@@ -159,6 +159,10 @@
                     <option value="long">Long (Detailed paragraph)</option>
                 </select>
             </div>
+            <div class="field-group">
+                <label for="userVibe">Additional Vibe/Context (Optional)</label>
+                <textarea id="userVibe" placeholder="e.g., 'Loved the lasagna, but waiter was rude'"></textarea>
+            </div>
             <button id="generateBtn">Generate AI Review</button>
             <div id="loader" class="loader">Generating with Gemini AI...</div>
         </div>
@@ -167,10 +171,15 @@
             <div class="field-group">
                 <label for="reviewOutput">Generated Review</label>
                 <textarea id="reviewOutput" readonly></textarea>
+                <button id="autoPasteBtn" style="margin-top: 8px; background-color: #0f9d58;">✨ Auto-Paste to Maps</button>
             </div>
             <div class="field-group">
                 <label for="promptOutput">Image Generation Prompt</label>
                 <textarea id="promptOutput" readonly></textarea>
+            </div>
+            <div class="field-group preview-container">
+                <label>Generated Image Preview</label>
+                <img id="imagePreview" src="" alt="AI Generated visualization" style="width: 100%; border-radius: 4px; display: none;" />
             </div>
         </div>
 
