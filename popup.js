@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const placeNameEl = document.getElementById('placeName');
     const placeAddressEl = document.getElementById('placeAddress');
     const sentimentSelect = document.getElementById('sentiment');
+    const lengthSelect = document.getElementById('reviewLength');
     const loader = document.getElementById('loader');
     const resultsCard = document.getElementById('resultsCard');
     const reviewOutput = document.getElementById('reviewOutput');
@@ -48,6 +49,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         const sentiment = sentimentSelect.value;
+        const reviewLength = lengthSelect.value;
 
         // UI Loading state
         generateBtn.disabled = true;
@@ -56,9 +58,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         statusMessage.classList.add('hidden');
 
         try {
-            const result = await callGeminiAPI(apiKey, currentPlaceInfo, sentiment);
-            reviewOutput.value = result.review;
-            promptOutput.value = result.image_prompt;
+            const result = await callGeminiAPI(apiKey, currentPlaceInfo, sentiment, reviewLength);
+            reviewOutput.value = result.review || "Review could not be generated.";
+            promptOutput.value = result.image_prompt || result.imagePrompt || "Could not generate image prompt.";
             resultsCard.classList.remove('hidden');
         } catch (error) {
             showError("Failed to generate: " + error.message);
@@ -122,17 +124,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    async function callGeminiAPI(apiKey, placeInfo, sentiment) {
+    async function callGeminiAPI(apiKey, placeInfo, sentiment, reviewLength) {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
-        const systemPrompt = `You are an expert copywriter and local guide.`;
+        const systemPrompt = `You are a trusted local guide who has personally visited and explored this place. You pay close attention to both the good and bad aspects based on the place's category and name. Your writing tone is highly natural, genuine, and relatable—written exactly like a real human leaving a Google Maps review. You avoid corporate or overly robotic phrasing.`;
+        
+        let lengthInstruction = "";
+        if (reviewLength === "short") lengthInstruction = "Keep it brief and concise, around 1-2 sentences.";
+        else if (reviewLength === "medium") lengthInstruction = "Write a standard paragraph, around 3-4 sentences.";
+        else lengthInstruction = "Write a comprehensive and detailed review covering multiple aspects, around 5-7 sentences.";
+
         const userPrompt = `
         Place Name: ${placeInfo.name}
         Address: ${placeInfo.address}
         Recent Reviews Context: ${placeInfo.reviews.length > 0 ? placeInfo.reviews.join(' || ') : 'No recent reviews available.'}
         
-        Task 1: Write a highly authentic, naturally sounding ${sentiment} review for this place. Base it loosely on the context provided if available, otherwise make it generally applicable to the type of place. Keep it under 100 words.
-        Task 2: Write a descriptive image generation prompt that visualizes this location based on its name and address.
+        Task 1: Write an authentic, human-like ${sentiment} review for this place. Incorporate the vibe of the exact place category, its name, and mention specific details or environment aspects gleaned from the "Recent Reviews Context". ${lengthInstruction} Make sure it sounds like a real customer's lived experience.
+        Task 2: Write a highly descriptive image generation prompt. It must visually match the specific environment, atmosphere, and characteristic details mentioned in the real reviews and the place name so the generated image realistically represents this specific place.
 
         Return the response strictly as a JSON object with keys "review" and "image_prompt".
         `;
@@ -147,7 +155,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     properties: {
                         review: { type: "STRING" },
                         image_prompt: { type: "STRING" }
-                    }
+                    },
+                    required: ["review", "image_prompt"]
                 }
             }
         };
