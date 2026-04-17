@@ -1,4 +1,7 @@
 document.addEventListener('DOMContentLoaded', async () => {
+    const IMGBB_API_KEY = '6dd4a1b8639d6c5641d001cd417608a5';
+    const DOWNLOADS_SUBDIR = 'Maps';
+
     const apiKeyInput = document.getElementById('apiKey');
     const generateBtn = document.getElementById('generateBtn');
     const statusMessage = document.getElementById('statusMessage');
@@ -12,6 +15,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const resultsCard = document.getElementById('resultsCard');
     const reviewOutput = document.getElementById('reviewOutput');
     const promptOutput = document.getElementById('promptOutput');
+    const imgbbOutput = document.getElementById('imgbbOutput');
     const imagePreview = document.getElementById('imagePreview');
     const autoPasteBtn = document.getElementById('autoPasteBtn');
 
@@ -91,17 +95,32 @@ document.addEventListener('DOMContentLoaded', async () => {
         autoPasteBtn.textContent = '✨ Auto-Paste to Maps';
 
         if (cachedContent && cachedContent[cacheKey]) {
-            const result = cachedContent[cacheKey];
-            displayResults(result);
+            displayResults(cachedContent[cacheKey]);
             return;
         }
 
         try {
             const result = await callGeminiAPI(apiKey, currentPlaceInfo, sentiment, reviewLength, userVibe);
+            const enrichedResult = await processImageAndAssets(result, currentPlaceInfo.name);
+
             if (chrome.storage.session) {
-                chrome.storage.session.set({ [cacheKey]: result });
+                chrome.storage.session.set({ [cacheKey]: enrichedResult });
             }
-            displayResults(result);
+
+            await saveReviewHistory({
+                place: currentPlaceInfo.name,
+                address: currentPlaceInfo.address,
+                sentiment,
+                reviewLength,
+                userVibe,
+                review: enrichedResult.review,
+                imagePrompt: enrichedResult.image_prompt || enrichedResult.imagePrompt || '',
+                imageUrl: enrichedResult.generated_image_url || '',
+                imgbbUrl: enrichedResult.imgbb_url || '',
+                timestamp: new Date().toISOString()
+            });
+
+            displayResults(enrichedResult);
         } catch (error) {
             showError("Failed to generate: " + error.message);
         } finally {
@@ -178,17 +197,145 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         let promptText = result.image_prompt || result.imagePrompt || "Could not generate image prompt.";
         promptOutput.value = promptText;
+
+        if (imgbbOutput) {
+            imgbbOutput.value = result.imgbb_url || '';
+        }
         
-        if (promptText && promptText !== "Could not generate image prompt.") {
-            // Generate real image via Pollinations API
-            const encodedPrompt = encodeURIComponent(promptText);
-            imagePreview.src = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=350&height=200&nologo=true`;
+        const imageUrl = result.generated_image_url || (promptText && promptText !== "Could not generate image prompt." ? buildPollinationsImageUrl(promptText) : '');
+        if (imageUrl) {
+            imagePreview.src = imageUrl;
             imagePreview.style.display = 'block';
         }
 
         resultsCard.classList.remove('hidden');
         generateBtn.disabled = false;
         loader.style.display = 'none';
+    }
+
+    function buildPollinationsImageUrl(promptText) {
+        const encodedPrompt = encodeURIComponent(promptText);
+        return `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1280&height=960&enhance=true&nologo=true`;
+    }
+
+    function sanitizeFileName(name) {
+        return (name || 'map-place')
+            .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 120)
+            .replace(/ /g, '_') || 'map-place';
+    }
+
+    function blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                const dataUrl = reader.result;
+                if (typeof dataUrl !== 'string') {
+                    reject(new Error('Could not convert image to base64.'));
+                    return;
+                }
+                resolve(dataUrl.split(',')[1]);
+            };
+            reader.onerror = () => reject(new Error('Failed to read image blob.'));
+            reader.readAsDataURL(blob);
+        });
+    }
+
+    function downloadBlobToMapsFolder(blob, placeName) {
+        return new Promise((resolve, reject) => {
+            const safeName = sanitizeFileName(placeName);
+            const filename = `${DOWNLOADS_SUBDIR}/${safeName}.png`;
+            const objectUrl = URL.createObjectURL(blob);
+
+            chrome.downloads.download({
+                url: objectUrl,
+                filename,
+                conflictAction: 'uniquify',
+                saveAs: false
+            }, (downloadId) => {
+                URL.revokeObjectURL(objectUrl);
+
+                if (chrome.runtime.lastError) {
+                    reject(new Error(chrome.runtime.lastError.message));
+                    return;
+                }
+
+                resolve({ downloadId, filename });
+            });
+        });
+    }
+
+    async function uploadImageToImgBB(base64Image) {
+        const formData = new FormData();
+        formData.append('image', base64Image);
+
+        const response = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, {
+            method: 'POST',
+            body: formData,
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error(result.error?.message || 'Unknown ImgBB upload error');
+        }
+
+        return result.data.url;
+    }
+
+    async function processImageAndAssets(result, placeName) {
+        const imagePrompt = result.image_prompt || result.imagePrompt;
+        if (!imagePrompt) return result;
+
+        const imageUrl = buildPollinationsImageUrl(imagePrompt);
+        const output = {
+            ...result,
+            generated_image_url: imageUrl,
+            local_download_path: '',
+            imgbb_url: ''
+        };
+
+        try {
+            const imageResponse = await fetch(imageUrl);
+            if (!imageResponse.ok) {
+                throw new Error('Unable to fetch generated image.');
+            }
+
+            const imageBlob = await imageResponse.blob();
+
+            try {
+                const downloadResult = await downloadBlobToMapsFolder(imageBlob, placeName);
+                output.local_download_path = `Downloads/${downloadResult.filename}`;
+            } catch (downloadError) {
+                console.error('Failed saving image to Downloads/Maps:', downloadError);
+            }
+
+            try {
+                const base64Image = await blobToBase64(imageBlob);
+                output.imgbb_url = await uploadImageToImgBB(base64Image);
+                console.log('Successfully uploaded image to ImgBB:', output.imgbb_url);
+            } catch (uploadError) {
+                console.error('Failed to upload image to ImgBB:', uploadError);
+            }
+        } catch (imageError) {
+            console.error('Image processing failed:', imageError);
+        }
+
+        return output;
+    }
+
+    async function saveReviewHistory(entry) {
+        try {
+            const existing = await chrome.storage.local.get(['reviewHistory']);
+            const history = Array.isArray(existing.reviewHistory) ? existing.reviewHistory : [];
+            history.unshift(entry);
+
+            const cappedHistory = history.slice(0, 200);
+            await chrome.storage.local.set({ reviewHistory: cappedHistory });
+        } catch (err) {
+            console.error('Failed saving review history:', err);
+        }
     }
 
     function showError(msg) {
