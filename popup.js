@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const IMGBB_API_KEY = '6dd4a1b8639d6c5641d001cd417608a5';
     const DOWNLOADS_SUBDIR = 'Maps';
     const MAX_HISTORY_ITEMS = 200;
+    const PREFS_STORAGE_KEY = 'mapsReviewPrefs';
 
     const apiKeyInput = document.getElementById('apiKey');
     const generateBtn = document.getElementById('generateBtn');
@@ -14,7 +15,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     const languageModeSelect = document.getElementById('languageMode');
     const lengthSelect = document.getElementById('reviewLength');
     const imageQualitySelect = document.getElementById('imageQuality');
+    const aspectRatioSelect = document.getElementById('aspectRatio');
     const imageStyleSelect = document.getElementById('imageStyle');
+    const responseModeSelect = document.getElementById('responseMode');
+    const thinkingLevelSelect = document.getElementById('thinkingLevel');
+    const includeThoughtsInput = document.getElementById('includeThoughts');
+    const useWebGroundingInput = document.getElementById('useWebGrounding');
+    const useImageGroundingInput = document.getElementById('useImageGrounding');
+    const referenceImagesInput = document.getElementById('referenceImages');
     const userVibeInput = document.getElementById('userVibe');
     const loader = document.getElementById('loader');
     const resultsCard = document.getElementById('resultsCard');
@@ -31,30 +39,113 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let currentPlaceInfo = null;
     let currentImageBlob = null;
+    let currentImageObjectUrl = null;
     let isImageRemixRunning = false;
 
-    // Persist UI states so if popup closes, inputs are not lost
-    const restoreInputs = () => {
-        chrome.storage.local.get([
-            'savedSentiment',
-            'savedPersonaStyle',
-            'savedLanguageMode',
-            'savedLength',
-            'savedImageQuality',
-            'savedImageStyle',
-            'savedVibe'
-        ], (result) => {
-            if (result.savedSentiment) sentimentSelect.value = result.savedSentiment;
-            if (result.savedPersonaStyle) personaStyleSelect.value = result.savedPersonaStyle;
-            if (result.savedLanguageMode) languageModeSelect.value = result.savedLanguageMode;
-            if (result.savedLength) lengthSelect.value = result.savedLength;
-            if (result.savedImageQuality) imageQualitySelect.value = result.savedImageQuality;
-            if (result.savedImageStyle) imageStyleSelect.value = result.savedImageStyle;
-            if (result.savedVibe) userVibeInput.value = result.savedVibe;
+    function loadPreferences() {
+        try {
+            const stored = localStorage.getItem(PREFS_STORAGE_KEY);
+            if (stored) {
+                return JSON.parse(stored);
+            }
+        } catch (err) {
+            console.error('Failed loading preferences from localStorage:', err);
+        }
+
+        return {
+            sentiment: 'Positive',
+            personaStyle: 'Local Guide',
+            languageMode: 'auto',
+            reviewLength: 'medium',
+            imageQuality: '1K',
+            aspectRatio: '1:1',
+            imageStyle: 'photorealistic',
+            responseMode: 'text-image',
+            thinkingLevel: 'minimal',
+            includeThoughts: false,
+            useWebGrounding: false,
+            useImageGrounding: false,
+            vibe: ''
+        };
+    }
+
+    function savePreferences() {
+        const prefs = {
+            sentiment: sentimentSelect.value,
+            personaStyle: personaStyleSelect.value,
+            languageMode: languageModeSelect.value,
+            reviewLength: lengthSelect.value,
+            imageQuality: imageQualitySelect.value,
+            aspectRatio: aspectRatioSelect.value,
+            imageStyle: imageStyleSelect.value,
+            responseMode: responseModeSelect.value,
+            thinkingLevel: thinkingLevelSelect.value,
+            includeThoughts: includeThoughtsInput.checked,
+            useWebGrounding: useWebGroundingInput.checked,
+            useImageGrounding: useImageGroundingInput.checked,
+            vibe: userVibeInput.value
+        };
+
+        localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs));
+    }
+
+    function applyPreferences() {
+        const prefs = loadPreferences();
+        sentimentSelect.value = prefs.sentiment || sentimentSelect.value;
+        personaStyleSelect.value = prefs.personaStyle || personaStyleSelect.value;
+        languageModeSelect.value = prefs.languageMode || languageModeSelect.value;
+        lengthSelect.value = prefs.reviewLength || lengthSelect.value;
+        imageQualitySelect.value = prefs.imageQuality || imageQualitySelect.value;
+        aspectRatioSelect.value = prefs.aspectRatio || aspectRatioSelect.value;
+        imageStyleSelect.value = prefs.imageStyle || imageStyleSelect.value;
+        responseModeSelect.value = prefs.responseMode || responseModeSelect.value;
+        thinkingLevelSelect.value = prefs.thinkingLevel || thinkingLevelSelect.value;
+        includeThoughtsInput.checked = Boolean(prefs.includeThoughts);
+        useWebGroundingInput.checked = Boolean(prefs.useWebGrounding);
+        useImageGroundingInput.checked = Boolean(prefs.useImageGrounding);
+        userVibeInput.value = prefs.vibe || '';
+
+        savePreferences();
+    }
+
+    async function migrateLegacyPreferences() {
+        if (localStorage.getItem(PREFS_STORAGE_KEY)) {
+            return;
+        }
+
+        const legacyPrefs = await new Promise((resolve) => {
+            chrome.storage.local.get([
+                'savedSentiment',
+                'savedPersonaStyle',
+                'savedLanguageMode',
+                'savedLength',
+                'savedImageQuality',
+                'savedImageStyle',
+                'savedVibe'
+            ], resolve);
         });
-    };
-    
-    restoreInputs();
+
+        const migratedPrefs = {
+            sentiment: legacyPrefs.savedSentiment || 'Positive',
+            personaStyle: legacyPrefs.savedPersonaStyle || 'Local Guide',
+            languageMode: legacyPrefs.savedLanguageMode || 'auto',
+            reviewLength: legacyPrefs.savedLength || 'medium',
+            imageQuality: '1K',
+            aspectRatio: '1:1',
+            imageStyle: legacyPrefs.savedImageStyle || 'photorealistic',
+            responseMode: 'text-image',
+            thinkingLevel: 'minimal',
+            includeThoughts: false,
+            useWebGrounding: false,
+            useImageGrounding: false,
+            vibe: legacyPrefs.savedVibe || ''
+        };
+
+        localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(migratedPrefs));
+    }
+
+    await migrateLegacyPreferences();
+    applyPreferences();
 
     // Save inputs automatically on change
     [
@@ -63,19 +154,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         languageModeSelect,
         lengthSelect,
         imageQualitySelect,
+        aspectRatioSelect,
         imageStyleSelect,
+        responseModeSelect,
+        thinkingLevelSelect,
+        includeThoughtsInput,
+        useWebGroundingInput,
+        useImageGroundingInput,
+        referenceImagesInput,
         userVibeInput
     ].forEach(el => {
         el.addEventListener('change', () => {
-            chrome.storage.local.set({
-                savedSentiment: sentimentSelect.value,
-                savedPersonaStyle: personaStyleSelect.value,
-                savedLanguageMode: languageModeSelect.value,
-                savedLength: lengthSelect.value,
-                savedImageQuality: imageQualitySelect.value,
-                savedImageStyle: imageStyleSelect.value,
-                savedVibe: userVibeInput.value
-            });
+            savePreferences();
         });
     });
 
@@ -118,11 +208,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         const languageMode = languageModeSelect.value;
         const reviewLength = lengthSelect.value;
         const imageQuality = imageQualitySelect.value;
+        const aspectRatio = aspectRatioSelect.value;
         const imageStyle = imageStyleSelect.value;
+        const responseMode = responseModeSelect.value;
+        const thinkingLevel = thinkingLevelSelect.value;
+        const includeThoughts = includeThoughtsInput.checked;
+        const useWebGrounding = useWebGroundingInput.checked;
+        const useImageGrounding = useImageGroundingInput.checked;
         const userVibe = userVibeInput.value.trim();
+        const referenceImages = Array.from(referenceImagesInput.files || []).slice(0, 14);
 
         // Check Cache first
-        const cacheKey = `${currentPlaceInfo.name}_${sentiment}_${personaStyle}_${languageMode}_${reviewLength}_${imageQuality}_${imageStyle}_${userVibe}`;
+        const cacheKey = `${currentPlaceInfo.name}_${sentiment}_${personaStyle}_${languageMode}_${reviewLength}_${imageQuality}_${aspectRatio}_${imageStyle}_${responseMode}_${thinkingLevel}_${includeThoughts}_${useWebGrounding}_${useImageGrounding}_${userVibe}`;
         const cachedContent = await chrome.storage.session?.get([cacheKey]);
 
         // UI Loading state
@@ -152,7 +249,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             const enrichedResult = await processImageAndAssets(result, currentPlaceInfo.name, {
                 imageQuality,
+                aspectRatio,
                 imageStyle
+            }, {
+                responseMode,
+                thinkingLevel,
+                includeThoughts,
+                useWebGrounding,
+                useImageGrounding,
+                referenceImages
             });
 
             if (chrome.storage.session) {
@@ -167,7 +272,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 languageMode,
                 reviewLength,
                 imageQuality,
+                aspectRatio,
                 imageStyle,
+                responseMode,
+                thinkingLevel,
+                includeThoughts,
+                useWebGrounding,
+                useImageGrounding,
                 userVibe,
                 review: enrichedResult.review,
                 imagePrompt: enrichedResult.image_prompt || enrichedResult.imagePrompt || '',
@@ -318,6 +429,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function displayResults(result) {
+        if (currentImageObjectUrl) {
+            URL.revokeObjectURL(currentImageObjectUrl);
+            currentImageObjectUrl = null;
+        }
+
         currentImageBlob = null;
         reviewOutput.value = result.review || "Review could not be generated.";
         
@@ -328,7 +444,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             imgbbOutput.value = result.imgbb_url || '';
         }
         
-        const imageUrl = result.generated_image_url || (promptText && promptText !== "Could not generate image prompt." ? buildPollinationsImageUrl(promptText) : '');
+        const imageUrl = result.generated_image_url || '';
         if (imageUrl) {
             imagePreview.src = imageUrl;
             imagePreview.style.display = 'block';
@@ -339,24 +455,100 @@ document.addEventListener('DOMContentLoaded', async () => {
         loader.style.display = 'none';
     }
 
-    function buildPollinationsImageUrl(promptText) {
-        const styleMap = {
-            photorealistic: 'photorealistic, real-life details, natural textures',
-            cinematic: 'cinematic composition, dramatic lighting, wide dynamic range',
-            'golden-hour': 'golden hour sunlight, warm tones, soft glow',
-            'night-vibrant': 'vibrant night scene, neon accents, rich contrast'
+    async function processImageAndAssets(result, placeName, imageOptions = {}, generationOptions = {}) {
+        const imagePrompt = result.image_prompt || result.imagePrompt;
+        if (!imagePrompt) return result;
+
+        const imageResponse = await callGeminiImageAPI(imagePrompt, imageOptions, generationOptions);
+        const generatedImage = extractGeneratedImage(imageResponse);
+        if (!generatedImage) {
+            throw new Error('No image returned by Gemini image model.');
+        }
+
+        const imageBlob = base64ToBlob(generatedImage.base64, generatedImage.mimeType);
+        currentImageBlob = imageBlob;
+        setImagePreviewFromBlob(imageBlob);
+
+        const output = {
+            ...result,
+            generated_image_url: generatedImage.dataUrl,
+            generated_image_text: imageResponse?.candidates?.[0]?.content?.parts?.map(part => part.text).filter(Boolean).join('\n') || '',
+            local_download_path: '',
+            imgbb_url: ''
         };
 
-        const selectedStyle = imageStyleSelect?.value || 'photorealistic';
-        const quality = imageQualitySelect?.value || 'hd';
-        const seed = Date.now();
-        const resolution = quality === 'uhd' ? { width: 1920, height: 1440 } : { width: 1280, height: 960 };
-        const stylizedPrompt = `${promptText}. Style guidance: ${styleMap[selectedStyle] || styleMap.photorealistic}.`;
-        const encodedStylizedPrompt = encodeURIComponent(stylizedPrompt);
-        return `https://image.pollinations.ai/prompt/${encodedStylizedPrompt}?width=${resolution.width}&height=${resolution.height}&enhance=true&seed=${seed}&nologo=true`;
+        try {
+            const downloadResult = await downloadBlobToMapsFolder(imageBlob, placeName);
+            output.local_download_path = `Downloads/${downloadResult.filename}`;
+        } catch (downloadError) {
+            console.error('Failed saving image to Downloads/Maps:', downloadError);
+        }
+
+        try {
+            const base64Image = await blobToBase64(imageBlob);
+            output.imgbb_url = await uploadImageToImgBB(base64Image);
+            console.log('Successfully uploaded image to ImgBB:', output.imgbb_url);
+        } catch (uploadError) {
+            console.error('Failed to upload image to ImgBB:', uploadError);
+        }
+
+        return output;
     }
 
-    function buildPollinationsImageUrlWithOptions(promptText, options = {}) {
+    async function callGeminiImageAPI(promptText, imageOptions, generationOptions) {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key=${apiKeyInput.value.trim()}`;
+        const contentsParts = [];
+        const referenceImages = Array.isArray(generationOptions.referenceImages) ? generationOptions.referenceImages : [];
+
+        for (const file of referenceImages) {
+            const base64Image = await fileToBase64(file);
+            contentsParts.push({
+                inlineData: {
+                    mimeType: file.type || 'image/png',
+                    data: base64Image
+                }
+            });
+        }
+
+        contentsParts.push({ text: buildGeminiImagePrompt(promptText, imageOptions, generationOptions) });
+
+        const payload = {
+            contents: [{ parts: contentsParts }],
+            generationConfig: {
+                responseModalities: generationOptions.responseMode === 'image-only' ? ['Image'] : ['Text', 'Image'],
+                imageConfig: {
+                    aspectRatio: imageOptions.aspectRatio || '1:1',
+                    imageSize: imageOptions.imageQuality || '1K'
+                }
+            }
+        };
+
+        // thinkingConfig is not natively supported as a field in gemini-3.1-flash-image-preview
+        // removed to prevent invalid JSON payload errors.
+
+        if (generationOptions.useWebGrounding || generationOptions.useImageGrounding) {
+            const searchTypes = {};
+            if (generationOptions.useWebGrounding) searchTypes.webSearch = {};
+            if (generationOptions.useImageGrounding) searchTypes.imageSearch = {};
+
+            payload.tools = [{ googleSearch: { searchTypes } }];
+        }
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error?.message || 'Image generation request failed');
+        }
+
+        return response.json();
+    }
+
+    function buildGeminiImagePrompt(promptText, imageOptions, generationOptions) {
         const styleMap = {
             photorealistic: 'photorealistic, real-life details, natural textures',
             cinematic: 'cinematic composition, dramatic lighting, wide dynamic range',
@@ -364,14 +556,76 @@ document.addEventListener('DOMContentLoaded', async () => {
             'night-vibrant': 'vibrant night scene, neon accents, rich contrast'
         };
 
-        const selectedStyle = options.imageStyle || imageStyleSelect?.value || 'photorealistic';
-        const quality = options.imageQuality || imageQualitySelect?.value || 'hd';
-        const seed = options.forceSeed || Date.now();
-        const resolution = quality === 'uhd' ? { width: 1920, height: 1440 } : { width: 1280, height: 960 };
-        const stylizedPrompt = `${promptText}. Style guidance: ${styleMap[selectedStyle] || styleMap.photorealistic}.`;
-        const encodedStylizedPrompt = encodeURIComponent(stylizedPrompt);
+        const selectedStyle = imageOptions.imageStyle || 'photorealistic';
+        const styleHint = styleMap[selectedStyle] || styleMap.photorealistic;
+        const aspectHint = imageOptions.aspectRatio ? `Aspect ratio: ${imageOptions.aspectRatio}.` : '';
+        const sizeHint = imageOptions.imageQuality ? `Output size: ${imageOptions.imageQuality}.` : '';
+        const searchHint = generationOptions.useWebGrounding ? 'Use Google Search grounding for factual environment details.' : '';
+        const imageSearchHint = generationOptions.useImageGrounding ? 'Use image search grounding for visual references, but avoid people sourced from search.' : '';
+        const referenceHint = Array.isArray(generationOptions.referenceImages) && generationOptions.referenceImages.length > 0
+            ? `Use ${generationOptions.referenceImages.length} reference image(s) for composition and fidelity.`
+            : '';
 
-        return `https://image.pollinations.ai/prompt/${encodedStylizedPrompt}?width=${resolution.width}&height=${resolution.height}&enhance=true&seed=${seed}&nologo=true`;
+        return `${promptText}. Style guidance: ${styleHint}. ${aspectHint} ${sizeHint} ${searchHint} ${imageSearchHint} ${referenceHint}`.trim();
+    }
+
+    function extractGeneratedImage(imageResponse) {
+        const parts = imageResponse?.candidates?.[0]?.content?.parts || [];
+        for (const part of parts) {
+            const inlineData = part.inlineData || part.inline_data;
+            if (inlineData?.data) {
+                const mimeType = inlineData.mimeType || inlineData.mime_type || 'image/png';
+                return {
+                    base64: inlineData.data,
+                    mimeType,
+                    dataUrl: `data:${mimeType};base64,${inlineData.data}`
+                };
+            }
+        }
+
+        return null;
+    }
+
+    function base64ToBlob(base64, mimeType) {
+        const byteCharacters = atob(base64);
+        const byteArrays = [];
+
+        for (let offset = 0; offset < byteCharacters.length; offset += 512) {
+            const slice = byteCharacters.slice(offset, offset + 512);
+            const byteNumbers = new Array(slice.length);
+            for (let i = 0; i < slice.length; i += 1) {
+                byteNumbers[i] = slice.charCodeAt(i);
+            }
+            byteArrays.push(new Uint8Array(byteNumbers));
+        }
+
+        return new Blob(byteArrays, { type: mimeType || 'image/png' });
+    }
+
+    function setImagePreviewFromBlob(blob) {
+        if (currentImageObjectUrl) {
+            URL.revokeObjectURL(currentImageObjectUrl);
+        }
+
+        currentImageObjectUrl = URL.createObjectURL(blob);
+        imagePreview.src = currentImageObjectUrl;
+        imagePreview.style.display = 'block';
+    }
+
+    function fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const result = reader.result;
+                if (typeof result !== 'string') {
+                    reject(new Error('Failed to read reference image.'));
+                    return;
+                }
+                resolve(result.split(',')[1]);
+            };
+            reader.onerror = () => reject(new Error('Failed to read reference image.'));
+            reader.readAsDataURL(file);
+        });
     }
 
     function sanitizeFileName(name) {
@@ -438,48 +692,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         return result.data.url;
-    }
-
-    async function processImageAndAssets(result, placeName, options = {}) {
-        const imagePrompt = result.image_prompt || result.imagePrompt;
-        if (!imagePrompt) return result;
-
-        const imageUrl = buildPollinationsImageUrlWithOptions(imagePrompt, options);
-        const output = {
-            ...result,
-            generated_image_url: imageUrl,
-            local_download_path: '',
-            imgbb_url: ''
-        };
-
-        try {
-            const imageResponse = await fetch(imageUrl);
-            if (!imageResponse.ok) {
-                throw new Error('Unable to fetch generated image.');
-            }
-
-            const imageBlob = await imageResponse.blob();
-            currentImageBlob = imageBlob;
-
-            try {
-                const downloadResult = await downloadBlobToMapsFolder(imageBlob, placeName);
-                output.local_download_path = `Downloads/${downloadResult.filename}`;
-            } catch (downloadError) {
-                console.error('Failed saving image to Downloads/Maps:', downloadError);
-            }
-
-            try {
-                const base64Image = await blobToBase64(imageBlob);
-                output.imgbb_url = await uploadImageToImgBB(base64Image);
-                console.log('Successfully uploaded image to ImgBB:', output.imgbb_url);
-            } catch (uploadError) {
-                console.error('Failed to upload image to ImgBB:', uploadError);
-            }
-        } catch (imageError) {
-            console.error('Image processing failed:', imageError);
-        }
-
-        return output;
     }
 
     async function saveReviewHistory(entry) {
@@ -574,7 +786,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         chrome.scripting.executeScript({
             target: { tabId: tabId },
             function: scrapePlaceDOM
-        }, (injectionResults) => {
+        }, async (injectionResults) => {
             if (chrome.runtime.lastError || !injectionResults || !injectionResults[0]) {
                 showError("Failed to read map data. Refresh the page and try again.");
                 return;
@@ -591,29 +803,26 @@ document.addEventListener('DOMContentLoaded', async () => {
                 placeCard.classList.remove('hidden');
 
                 // Check cache immediately upon place detection so results restore automatically
-                chrome.storage.local.get([
-                    'savedSentiment',
-                    'savedPersonaStyle',
-                    'savedLanguageMode',
-                    'savedLength',
-                    'savedImageQuality',
-                    'savedImageStyle',
-                    'savedVibe'
-                ], async (localData) => {
-                    const sentiment = localData.savedSentiment || sentimentSelect.value;
-                    const personaStyle = localData.savedPersonaStyle || personaStyleSelect.value;
-                    const languageMode = localData.savedLanguageMode || languageModeSelect.value;
-                    const length = localData.savedLength || lengthSelect.value;
-                    const imageQuality = localData.savedImageQuality || imageQualitySelect.value;
-                    const imageStyle = localData.savedImageStyle || imageStyleSelect.value;
-                    const vibe = localData.savedVibe || userVibeInput.value.trim();
-                    const cacheKey = `${data.name}_${sentiment}_${personaStyle}_${languageMode}_${length}_${imageQuality}_${imageStyle}_${vibe}`;
+                const prefs = loadPreferences();
+                const sentiment = prefs.sentiment || sentimentSelect.value;
+                const personaStyle = prefs.personaStyle || personaStyleSelect.value;
+                const languageMode = prefs.languageMode || languageModeSelect.value;
+                const length = prefs.reviewLength || lengthSelect.value;
+                const imageQuality = prefs.imageQuality || imageQualitySelect.value;
+                const aspectRatio = prefs.aspectRatio || aspectRatioSelect.value;
+                const imageStyle = prefs.imageStyle || imageStyleSelect.value;
+                const responseMode = prefs.responseMode || responseModeSelect.value;
+                const thinkingLevel = prefs.thinkingLevel || thinkingLevelSelect.value;
+                const includeThoughts = Boolean(prefs.includeThoughts);
+                const useWebGrounding = Boolean(prefs.useWebGrounding);
+                const useImageGrounding = Boolean(prefs.useImageGrounding);
+                const vibe = prefs.vibe || userVibeInput.value.trim();
+                const cacheKey = `${data.name}_${sentiment}_${personaStyle}_${languageMode}_${length}_${imageQuality}_${aspectRatio}_${imageStyle}_${responseMode}_${thinkingLevel}_${includeThoughts}_${useWebGrounding}_${useImageGrounding}_${vibe}`;
                     
-                    const cachedContent = await chrome.storage.session?.get([cacheKey]);
-                    if (cachedContent && cachedContent[cacheKey]) {
-                        displayResults(cachedContent[cacheKey]);
-                    }
-                });
+                const cachedContent = await chrome.storage.session?.get([cacheKey]);
+                if (cachedContent && cachedContent[cacheKey]) {
+                    displayResults(cachedContent[cacheKey]);
+                }
             }
         });
     }

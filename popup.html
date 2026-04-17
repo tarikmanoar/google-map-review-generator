@@ -118,6 +118,13 @@
                 display: none;
                 margin: 10px 0;
             }
+
+            .helper-text {
+                font-size: 12px;
+                color: #5f6368;
+                margin-top: 4px;
+                line-height: 1.4;
+            }
         </style>
     </head>
 
@@ -180,8 +187,29 @@
             <div class="field-group">
                 <label for="imageQuality">Image Quality</label>
                 <select id="imageQuality">
-                    <option value="hd" selected>HD (1280x960)</option>
-                    <option value="uhd">Ultra HD (1920x1440)</option>
+                    <option value="512">0.5K (512)</option>
+                    <option value="1K" selected>1K</option>
+                    <option value="2K">2K</option>
+                    <option value="4K">4K</option>
+                </select>
+            </div>
+            <div class="field-group">
+                <label for="aspectRatio">Aspect Ratio</label>
+                <select id="aspectRatio">
+                    <option value="1:1" selected>1:1</option>
+                    <option value="1:4">1:4</option>
+                    <option value="1:8">1:8</option>
+                    <option value="2:3">2:3</option>
+                    <option value="3:2">3:2</option>
+                    <option value="3:4">3:4</option>
+                    <option value="4:1">4:1</option>
+                    <option value="4:3">4:3</option>
+                    <option value="4:5">4:5</option>
+                    <option value="5:4">5:4</option>
+                    <option value="8:1">8:1</option>
+                    <option value="9:16">9:16</option>
+                    <option value="16:9">16:9</option>
+                    <option value="21:9">21:9</option>
                 </select>
             </div>
             <div class="field-group">
@@ -192,6 +220,45 @@
                     <option value="golden-hour">Golden Hour</option>
                     <option value="night-vibrant">Night Vibrant</option>
                 </select>
+            </div>
+            <div class="field-group">
+                <label for="responseMode">Response Mode</label>
+                <select id="responseMode">
+                    <option value="text-image" selected>Text + Image</option>
+                    <option value="image-only">Image Only</option>
+                </select>
+            </div>
+            <div class="field-group">
+                <label for="thinkingLevel">Thinking Level</label>
+                <select id="thinkingLevel">
+                    <option value="minimal" selected>Minimal</option>
+                    <option value="high">High</option>
+                </select>
+            </div>
+            <div class="field-group">
+                <label>
+                    <input type="checkbox" id="includeThoughts">
+                    Include thoughts in response
+                </label>
+                <div class="helper-text">Useful for debugging and advanced workflows.</div>
+            </div>
+            <div class="field-group">
+                <label>
+                    <input type="checkbox" id="useWebGrounding">
+                    Ground image with Google Search web results
+                </label>
+            </div>
+            <div class="field-group">
+                <label>
+                    <input type="checkbox" id="useImageGrounding">
+                    Ground image with Google Search image results
+                </label>
+                <div class="helper-text">Not supported for people in image search grounding.</div>
+            </div>
+            <div class="field-group">
+                <label for="referenceImages">Reference Images (optional)</label>
+                <input type="file" id="referenceImages" accept="image/*" multiple>
+                <div class="helper-text">Supports up to 14 images for advanced composition.</div>
             </div>
             <div class="field-group">
                 <label for="userVibe">Additional Vibe/Context (Optional)</label>
