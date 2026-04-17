@@ -152,11 +152,45 @@
                 </select>
             </div>
             <div class="field-group">
+                <label for="personaStyle">Persona Style</label>
+                <select id="personaStyle">
+                    <option value="Local Guide" selected>Local Guide</option>
+                    <option value="Food Critic">Food Critic</option>
+                    <option value="Traveler">Traveler</option>
+                    <option value="Family Visitor">Family Visitor</option>
+                    <option value="Business Visitor">Business Visitor</option>
+                </select>
+            </div>
+            <div class="field-group">
+                <label for="languageMode">Review Language</label>
+                <select id="languageMode">
+                    <option value="auto" selected>Auto (Local if relevant)</option>
+                    <option value="en">English</option>
+                    <option value="local">Dominant local language</option>
+                </select>
+            </div>
+            <div class="field-group">
                 <label for="reviewLength">Review Length</label>
                 <select id="reviewLength">
                     <option value="short">Short (1-2 sentences)</option>
                     <option value="medium" selected>Medium (3-4 sentences)</option>
                     <option value="long">Long (Detailed paragraph)</option>
+                </select>
+            </div>
+            <div class="field-group">
+                <label for="imageQuality">Image Quality</label>
+                <select id="imageQuality">
+                    <option value="hd" selected>HD (1280x960)</option>
+                    <option value="uhd">Ultra HD (1920x1440)</option>
+                </select>
+            </div>
+            <div class="field-group">
+                <label for="imageStyle">Image Style</label>
+                <select id="imageStyle">
+                    <option value="photorealistic" selected>Photorealistic</option>
+                    <option value="cinematic">Cinematic</option>
+                    <option value="golden-hour">Golden Hour</option>
+                    <option value="night-vibrant">Night Vibrant</option>
                 </select>
             </div>
             <div class="field-group">
@@ -172,19 +206,28 @@
                 <label for="reviewOutput">Generated Review</label>
                 <textarea id="reviewOutput" readonly></textarea>
                 <button id="autoPasteBtn" style="margin-top: 8px; background-color: #0f9d58;">✨ Auto-Paste to Maps</button>
+                <button id="copyReviewBtn" style="margin-top: 8px; background-color: #5f6368;">Copy Review</button>
             </div>
             <div class="field-group">
                 <label for="promptOutput">Image Generation Prompt</label>
                 <textarea id="promptOutput" readonly></textarea>
+                <button id="remixImageBtn" style="margin-top: 8px; background-color: #1a73e8;">Remix Image Variation</button>
             </div>
             <div class="field-group">
                 <label for="imgbbOutput">ImgBB URL</label>
                 <input id="imgbbOutput" type="text" readonly placeholder="Image upload link will appear here">
+                <button id="copyImgbbBtn" style="margin-top: 8px; background-color: #5f6368;">Copy ImgBB URL</button>
             </div>
             <div class="field-group preview-container">
                 <label>Generated Image Preview</label>
                 <img id="imagePreview" src="" alt="AI Generated visualization" style="width: 100%; border-radius: 4px; display: none;" />
+                <button id="downloadImageBtn" style="margin-top: 8px; background-color: #0b8043;">Download Current Image</button>
             </div>
+        </div>
+
+        <div class="card">
+            <label>Recent Generations</label>
+            <div id="historyList" class="place-info">No generations yet.</div>
         </div>
 
         <script src="popup.js"></script>

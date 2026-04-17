@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', async () => {
     const IMGBB_API_KEY = '6dd4a1b8639d6c5641d001cd417608a5';
     const DOWNLOADS_SUBDIR = 'Maps';
+    const MAX_HISTORY_ITEMS = 200;
 
     const apiKeyInput = document.getElementById('apiKey');
     const generateBtn = document.getElementById('generateBtn');
@@ -9,7 +10,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const placeNameEl = document.getElementById('placeName');
     const placeAddressEl = document.getElementById('placeAddress');
     const sentimentSelect = document.getElementById('sentiment');
+    const personaStyleSelect = document.getElementById('personaStyle');
+    const languageModeSelect = document.getElementById('languageMode');
     const lengthSelect = document.getElementById('reviewLength');
+    const imageQualitySelect = document.getElementById('imageQuality');
+    const imageStyleSelect = document.getElementById('imageStyle');
     const userVibeInput = document.getElementById('userVibe');
     const loader = document.getElementById('loader');
     const resultsCard = document.getElementById('resultsCard');
@@ -18,14 +23,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     const imgbbOutput = document.getElementById('imgbbOutput');
     const imagePreview = document.getElementById('imagePreview');
     const autoPasteBtn = document.getElementById('autoPasteBtn');
+    const copyReviewBtn = document.getElementById('copyReviewBtn');
+    const remixImageBtn = document.getElementById('remixImageBtn');
+    const copyImgbbBtn = document.getElementById('copyImgbbBtn');
+    const downloadImageBtn = document.getElementById('downloadImageBtn');
+    const historyList = document.getElementById('historyList');
 
     let currentPlaceInfo = null;
+    let currentImageBlob = null;
+    let isImageRemixRunning = false;
 
     // Persist UI states so if popup closes, inputs are not lost
     const restoreInputs = () => {
-        chrome.storage.local.get(['savedSentiment', 'savedLength', 'savedVibe'], (result) => {
+        chrome.storage.local.get([
+            'savedSentiment',
+            'savedPersonaStyle',
+            'savedLanguageMode',
+            'savedLength',
+            'savedImageQuality',
+            'savedImageStyle',
+            'savedVibe'
+        ], (result) => {
             if (result.savedSentiment) sentimentSelect.value = result.savedSentiment;
+            if (result.savedPersonaStyle) personaStyleSelect.value = result.savedPersonaStyle;
+            if (result.savedLanguageMode) languageModeSelect.value = result.savedLanguageMode;
             if (result.savedLength) lengthSelect.value = result.savedLength;
+            if (result.savedImageQuality) imageQualitySelect.value = result.savedImageQuality;
+            if (result.savedImageStyle) imageStyleSelect.value = result.savedImageStyle;
             if (result.savedVibe) userVibeInput.value = result.savedVibe;
         });
     };
@@ -33,11 +57,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     restoreInputs();
 
     // Save inputs automatically on change
-    [sentimentSelect, lengthSelect, userVibeInput].forEach(el => {
+    [
+        sentimentSelect,
+        personaStyleSelect,
+        languageModeSelect,
+        lengthSelect,
+        imageQualitySelect,
+        imageStyleSelect,
+        userVibeInput
+    ].forEach(el => {
         el.addEventListener('change', () => {
             chrome.storage.local.set({
                 savedSentiment: sentimentSelect.value,
+                savedPersonaStyle: personaStyleSelect.value,
+                savedLanguageMode: languageModeSelect.value,
                 savedLength: lengthSelect.value,
+                savedImageQuality: imageQualitySelect.value,
+                savedImageStyle: imageStyleSelect.value,
                 savedVibe: userVibeInput.value
             });
         });
@@ -78,11 +114,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         const sentiment = sentimentSelect.value;
+        const personaStyle = personaStyleSelect.value;
+        const languageMode = languageModeSelect.value;
         const reviewLength = lengthSelect.value;
+        const imageQuality = imageQualitySelect.value;
+        const imageStyle = imageStyleSelect.value;
         const userVibe = userVibeInput.value.trim();
 
         // Check Cache first
-        const cacheKey = `${currentPlaceInfo.name}_${sentiment}_${reviewLength}_${userVibe}`;
+        const cacheKey = `${currentPlaceInfo.name}_${sentiment}_${personaStyle}_${languageMode}_${reviewLength}_${imageQuality}_${imageStyle}_${userVibe}`;
         const cachedContent = await chrome.storage.session?.get([cacheKey]);
 
         // UI Loading state
@@ -96,12 +136,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (cachedContent && cachedContent[cacheKey]) {
             displayResults(cachedContent[cacheKey]);
+            generateBtn.disabled = false;
+            loader.style.display = 'none';
             return;
         }
 
         try {
-            const result = await callGeminiAPI(apiKey, currentPlaceInfo, sentiment, reviewLength, userVibe);
-            const enrichedResult = await processImageAndAssets(result, currentPlaceInfo.name);
+            const result = await callGeminiAPI(apiKey, currentPlaceInfo, {
+                sentiment,
+                personaStyle,
+                languageMode,
+                reviewLength,
+                userVibe
+            });
+
+            const enrichedResult = await processImageAndAssets(result, currentPlaceInfo.name, {
+                imageQuality,
+                imageStyle
+            });
 
             if (chrome.storage.session) {
                 chrome.storage.session.set({ [cacheKey]: enrichedResult });
@@ -111,7 +163,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 place: currentPlaceInfo.name,
                 address: currentPlaceInfo.address,
                 sentiment,
+                personaStyle,
+                languageMode,
                 reviewLength,
+                imageQuality,
+                imageStyle,
                 userVibe,
                 review: enrichedResult.review,
                 imagePrompt: enrichedResult.image_prompt || enrichedResult.imagePrompt || '',
@@ -150,6 +206,75 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         });
     });
+
+    if (copyReviewBtn) {
+        copyReviewBtn.addEventListener('click', async () => {
+            const text = reviewOutput.value.trim();
+            if (!text) return;
+            const copied = await copyToClipboard(text);
+            copyReviewBtn.textContent = copied ? 'Copied Review' : 'Copy Failed';
+            setTimeout(() => { copyReviewBtn.textContent = 'Copy Review'; }, 2000);
+        });
+    }
+
+    if (copyImgbbBtn) {
+        copyImgbbBtn.addEventListener('click', async () => {
+            const text = imgbbOutput.value.trim();
+            if (!text) return;
+            const copied = await copyToClipboard(text);
+            copyImgbbBtn.textContent = copied ? 'Copied URL' : 'Copy Failed';
+            setTimeout(() => { copyImgbbBtn.textContent = 'Copy ImgBB URL'; }, 2000);
+        });
+    }
+
+    if (downloadImageBtn) {
+        downloadImageBtn.addEventListener('click', async () => {
+            try {
+                if (currentImageBlob) {
+                    await downloadBlobToMapsFolder(currentImageBlob, currentPlaceInfo?.name || 'map-place');
+                    downloadImageBtn.textContent = 'Downloaded';
+                } else {
+                    downloadImageBtn.textContent = 'No image yet';
+                }
+            } catch (err) {
+                downloadImageBtn.textContent = 'Download failed';
+            }
+            setTimeout(() => { downloadImageBtn.textContent = 'Download Current Image'; }, 2000);
+        });
+    }
+
+    if (remixImageBtn) {
+        remixImageBtn.addEventListener('click', async () => {
+            if (isImageRemixRunning) return;
+            const imagePrompt = promptOutput.value.trim();
+            if (!imagePrompt || imagePrompt === 'Could not generate image prompt.') return;
+
+            isImageRemixRunning = true;
+            remixImageBtn.disabled = true;
+            remixImageBtn.textContent = 'Remixing...';
+            loader.style.display = 'block';
+
+            try {
+                const result = {
+                    review: reviewOutput.value,
+                    image_prompt: imagePrompt
+                };
+                const remixedResult = await processImageAndAssets(result, currentPlaceInfo?.name || 'map-place', {
+                    imageQuality: imageQualitySelect.value,
+                    imageStyle: imageStyleSelect.value,
+                    forceSeed: Date.now()
+                });
+                displayResults(remixedResult);
+            } catch (err) {
+                showError('Failed to remix image.');
+            } finally {
+                isImageRemixRunning = false;
+                remixImageBtn.disabled = false;
+                remixImageBtn.textContent = 'Remix Image Variation';
+                loader.style.display = 'none';
+            }
+        });
+    }
 
     // Injected function to paste into Google Maps
     function pasteReviewToMaps(text, sentiment) {
@@ -193,6 +318,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function displayResults(result) {
+        currentImageBlob = null;
         reviewOutput.value = result.review || "Review could not be generated.";
         
         let promptText = result.image_prompt || result.imagePrompt || "Could not generate image prompt.";
@@ -214,8 +340,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function buildPollinationsImageUrl(promptText) {
-        const encodedPrompt = encodeURIComponent(promptText);
-        return `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1280&height=960&enhance=true&nologo=true`;
+        const styleMap = {
+            photorealistic: 'photorealistic, real-life details, natural textures',
+            cinematic: 'cinematic composition, dramatic lighting, wide dynamic range',
+            'golden-hour': 'golden hour sunlight, warm tones, soft glow',
+            'night-vibrant': 'vibrant night scene, neon accents, rich contrast'
+        };
+
+        const selectedStyle = imageStyleSelect?.value || 'photorealistic';
+        const quality = imageQualitySelect?.value || 'hd';
+        const seed = Date.now();
+        const resolution = quality === 'uhd' ? { width: 1920, height: 1440 } : { width: 1280, height: 960 };
+        const stylizedPrompt = `${promptText}. Style guidance: ${styleMap[selectedStyle] || styleMap.photorealistic}.`;
+        const encodedStylizedPrompt = encodeURIComponent(stylizedPrompt);
+        return `https://image.pollinations.ai/prompt/${encodedStylizedPrompt}?width=${resolution.width}&height=${resolution.height}&enhance=true&seed=${seed}&nologo=true`;
+    }
+
+    function buildPollinationsImageUrlWithOptions(promptText, options = {}) {
+        const styleMap = {
+            photorealistic: 'photorealistic, real-life details, natural textures',
+            cinematic: 'cinematic composition, dramatic lighting, wide dynamic range',
+            'golden-hour': 'golden hour sunlight, warm tones, soft glow',
+            'night-vibrant': 'vibrant night scene, neon accents, rich contrast'
+        };
+
+        const selectedStyle = options.imageStyle || imageStyleSelect?.value || 'photorealistic';
+        const quality = options.imageQuality || imageQualitySelect?.value || 'hd';
+        const seed = options.forceSeed || Date.now();
+        const resolution = quality === 'uhd' ? { width: 1920, height: 1440 } : { width: 1280, height: 960 };
+        const stylizedPrompt = `${promptText}. Style guidance: ${styleMap[selectedStyle] || styleMap.photorealistic}.`;
+        const encodedStylizedPrompt = encodeURIComponent(stylizedPrompt);
+
+        return `https://image.pollinations.ai/prompt/${encodedStylizedPrompt}?width=${resolution.width}&height=${resolution.height}&enhance=true&seed=${seed}&nologo=true`;
     }
 
     function sanitizeFileName(name) {
@@ -284,11 +440,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         return result.data.url;
     }
 
-    async function processImageAndAssets(result, placeName) {
+    async function processImageAndAssets(result, placeName, options = {}) {
         const imagePrompt = result.image_prompt || result.imagePrompt;
         if (!imagePrompt) return result;
 
-        const imageUrl = buildPollinationsImageUrl(imagePrompt);
+        const imageUrl = buildPollinationsImageUrlWithOptions(imagePrompt, options);
         const output = {
             ...result,
             generated_image_url: imageUrl,
@@ -303,6 +459,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             const imageBlob = await imageResponse.blob();
+            currentImageBlob = imageBlob;
 
             try {
                 const downloadResult = await downloadBlobToMapsFolder(imageBlob, placeName);
@@ -331,11 +488,46 @@ document.addEventListener('DOMContentLoaded', async () => {
             const history = Array.isArray(existing.reviewHistory) ? existing.reviewHistory : [];
             history.unshift(entry);
 
-            const cappedHistory = history.slice(0, 200);
+            const cappedHistory = history.slice(0, MAX_HISTORY_ITEMS);
             await chrome.storage.local.set({ reviewHistory: cappedHistory });
+            renderRecentHistory(cappedHistory.slice(0, 8));
         } catch (err) {
             console.error('Failed saving review history:', err);
         }
+    }
+
+    async function copyToClipboard(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (err) {
+            console.error('Clipboard write failed:', err);
+            return false;
+        }
+    }
+
+    function renderRecentHistory(items) {
+        if (!historyList) return;
+        if (!Array.isArray(items) || items.length === 0) {
+            historyList.textContent = 'No generations yet.';
+            return;
+        }
+
+        historyList.innerHTML = items.map((item, index) => {
+            const place = escapeHtml(item.place || 'Unknown place');
+            const sentiment = escapeHtml(item.sentiment || 'Unknown');
+            const time = new Date(item.timestamp).toLocaleString();
+            return `<div style="padding:8px 0;border-bottom:1px solid #eceff1;"><strong>${index + 1}. ${place}</strong><br><span>${sentiment} · ${escapeHtml(time)}</span></div>`;
+        }).join('');
+    }
+
+    function escapeHtml(text) {
+        return String(text)
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
     }
 
     function showError(msg) {
@@ -399,11 +591,23 @@ document.addEventListener('DOMContentLoaded', async () => {
                 placeCard.classList.remove('hidden');
 
                 // Check cache immediately upon place detection so results restore automatically
-                chrome.storage.local.get(['savedSentiment', 'savedLength', 'savedVibe'], async (localData) => {
+                chrome.storage.local.get([
+                    'savedSentiment',
+                    'savedPersonaStyle',
+                    'savedLanguageMode',
+                    'savedLength',
+                    'savedImageQuality',
+                    'savedImageStyle',
+                    'savedVibe'
+                ], async (localData) => {
                     const sentiment = localData.savedSentiment || sentimentSelect.value;
+                    const personaStyle = localData.savedPersonaStyle || personaStyleSelect.value;
+                    const languageMode = localData.savedLanguageMode || languageModeSelect.value;
                     const length = localData.savedLength || lengthSelect.value;
+                    const imageQuality = localData.savedImageQuality || imageQualitySelect.value;
+                    const imageStyle = localData.savedImageStyle || imageStyleSelect.value;
                     const vibe = localData.savedVibe || userVibeInput.value.trim();
-                    const cacheKey = `${data.name}_${sentiment}_${length}_${vibe}`;
+                    const cacheKey = `${data.name}_${sentiment}_${personaStyle}_${languageMode}_${length}_${imageQuality}_${imageStyle}_${vibe}`;
                     
                     const cachedContent = await chrome.storage.session?.get([cacheKey]);
                     if (cachedContent && cachedContent[cacheKey]) {
@@ -414,10 +618,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    async function callGeminiAPI(apiKey, placeInfo, sentiment, reviewLength, userVibe) {
+    async function callGeminiAPI(apiKey, placeInfo, options) {
+        const {
+            sentiment,
+            personaStyle,
+            languageMode,
+            reviewLength,
+            userVibe
+        } = options;
+        const recentReviews = Array.isArray(placeInfo.reviews) ? placeInfo.reviews : [];
+
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
-        let systemPrompt = `You are a trusted local guide who has personally visited and explored this place. You pay close attention to both the good and bad aspects based on the place's category and name. Your writing tone is highly natural, genuine, and relatable—written exactly like a real human leaving a Google Maps review. You avoid corporate or overly robotic phrasing.`;
+        let systemPrompt = `You are an expert ${personaStyle} who has personally visited and explored this place. You pay close attention to both the good and bad aspects based on the place's category and name. Your writing tone is highly natural, genuine, and relatable-written exactly like a real human leaving a Google Maps review. You avoid corporate or overly robotic phrasing.`;
         
         let lengthInstruction = "";
         if (reviewLength === "short") lengthInstruction = "Keep it brief and concise, around 1-2 sentences.";
@@ -426,15 +639,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const vibeInstruction = userVibe ? `\nMake sure to explicitly weave this specific user sentiment/experience into the review naturally: "${userVibe}"` : "";
 
-        // Simple language detection logic based on address (a realistic fallback since Gemini handles this well if prompted)
-        systemPrompt += `\nIf the address implies a non-English speaking country, write the review in the dominant local language of that region, but keep the image prompt in English.`;
+        if (languageMode === 'en') {
+            systemPrompt += `\nWrite the review in English. Keep the image prompt in English.`;
+        } else if (languageMode === 'local') {
+            systemPrompt += `\nWrite the review in the dominant local language implied by the address. Keep the image prompt in English.`;
+        } else {
+            systemPrompt += `\nIf the address implies a non-English speaking country, write the review in the dominant local language of that region, but keep the image prompt in English.`;
+        }
 
         const userPrompt = `
         Place Name: ${placeInfo.name}
         Address: ${placeInfo.address}
         Place Category & Pricing: ${placeInfo.category || 'Not specified'}
         Current Rating: ${placeInfo.rating || 'Not specified'}
-        Recent Reviews Context: ${placeInfo.reviews.length > 0 ? placeInfo.reviews.join(' || ') : 'No recent reviews available.'}
+        Recent Reviews Context: ${recentReviews.length > 0 ? recentReviews.join(' || ') : 'No recent reviews available.'}
         
         Task 1: Write an authentic, human-like ${sentiment} review for this place. Incorporate the vibe of the exact place category, its name, and mention specific details or environment aspects gleaned from the "Recent Reviews Context". ${lengthInstruction} ${vibeInstruction} Make sure it sounds like a real customer's lived experience.
         Task 2: Write a highly descriptive image generation prompt. It must visually match the specific environment, atmosphere, and characteristic details mentioned in the real reviews and the place name so the generated image realistically represents this specific place.
@@ -470,8 +688,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         const data = await response.json();
-        const jsonText = data.candidates[0].content.parts[0].text;
+        const jsonText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-        return JSON.parse(jsonText);
+        if (!jsonText) {
+            throw new Error('Model returned an empty response.');
+        }
+
+        return safeJsonParse(jsonText);
     }
+
+    function safeJsonParse(text) {
+        try {
+            return JSON.parse(text);
+        } catch (err) {
+            const match = text.match(/\{[\s\S]*\}/);
+            if (!match) {
+                throw new Error('Could not parse model JSON response.');
+            }
+            return JSON.parse(match[0]);
+        }
+    }
+
+    chrome.storage.local.get(['reviewHistory'], (result) => {
+        const history = Array.isArray(result.reviewHistory) ? result.reviewHistory : [];
+        renderRecentHistory(history.slice(0, 8));
+    });
 });
