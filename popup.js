@@ -1,7 +1,7 @@
 document.addEventListener('DOMContentLoaded', async () => {
     const IMGBB_API_KEY = '6dd4a1b8639d6c5641d001cd417608a5';
     const DOWNLOADS_SUBDIR = 'Maps';
-    const MAX_HISTORY_ITEMS = 200;
+    const MAX_HISTORY_ITEMS = 5;
     const PREFS_STORAGE_KEY = 'mapsReviewPrefs';
 
     const apiKeyInput = document.getElementById('apiKey');
@@ -261,7 +261,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
 
             if (chrome.storage.session) {
-                chrome.storage.session.set({ [cacheKey]: enrichedResult });
+                const cachePayload = { ...enrichedResult };
+                delete cachePayload.generated_image_url; // Remove bulky base64
+                chrome.storage.session.set({ [cacheKey]: cachePayload }).catch(err => console.warn('Session cache full', err));
             }
 
             await saveReviewHistory({
@@ -282,7 +284,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 userVibe,
                 review: enrichedResult.review,
                 imagePrompt: enrichedResult.image_prompt || enrichedResult.imagePrompt || '',
-                imageUrl: enrichedResult.generated_image_url || '',
+                imageUrl: enrichedResult.imgbb_url || '', // Fallback to lightweight ImgBB URL instead of bulky Base64
                 imgbbUrl: enrichedResult.imgbb_url || '',
                 timestamp: new Date().toISOString()
             });
@@ -444,10 +446,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             imgbbOutput.value = result.imgbb_url || '';
         }
         
-        const imageUrl = result.generated_image_url || '';
+        const imageUrl = result.generated_image_url || result.imgbb_url || '';
         if (imageUrl) {
             imagePreview.src = imageUrl;
             imagePreview.style.display = 'block';
+        } else {
+            imagePreview.style.display = 'none';
         }
 
         resultsCard.classList.remove('hidden');
