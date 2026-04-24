@@ -258,8 +258,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     refreshPlaceBtn.addEventListener('click', () => {
         statusMessage.classList.add('hidden');
+        resultsCard.classList.add('hidden'); // Hide the previous results
+        
+        // Clear previous place completely before generating new
+        currentPlaceInfo = null;
+        generateBtn.disabled = true;
+        
         placeNameEl.textContent = 'Loading...';
         placeAddressEl.textContent = '';
+        
+        // Wipe old content
+        reviewOutput.value = '';
+        promptOutput.value = '';
+        imagesContainer.innerHTML = '';
+        
         extractMapData();
     });
 
