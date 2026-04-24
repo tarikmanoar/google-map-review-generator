@@ -15,7 +15,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const imageQualitySelect = document.getElementById('imageQuality');
     const aspectRatioSelect = document.getElementById('aspectRatio');
     const imageStyleSelect = document.getElementById('imageStyle');
-    const responseModeSelect = document.getElementById('responseMode');
+    const enableImagesToggle = document.getElementById('enableImagesToggle');
+    const imageSettingsAccordion = document.getElementById('imageSettingsAccordion');
+    const imageSettingsPanel = document.getElementById('imageSettingsPanel');
     const thinkingLevelSelect = document.getElementById('thinkingLevel');
     const includeThoughtsInput = document.getElementById('includeThoughts');
     const useWebGroundingInput = document.getElementById('useWebGrounding');
@@ -63,7 +65,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             imageQuality: '1K',
             aspectRatio: '1:1',
             imageStyle: 'photorealistic',
-            responseMode: 'text-image',
+            enableImages: true,
             thinkingLevel: 'minimal',
             includeThoughts: false,
             useWebGrounding: false,
@@ -82,7 +84,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             imageQuality: imageQualitySelect.value,
             aspectRatio: aspectRatioSelect.value,
             imageStyle: imageStyleSelect.value,
-            responseMode: responseModeSelect.value,
+            enableImages: enableImagesToggle.checked,
             thinkingLevel: thinkingLevelSelect.value,
             includeThoughts: includeThoughtsInput.checked,
             useWebGrounding: useWebGroundingInput.checked,
@@ -102,12 +104,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         imageQualitySelect.value = prefs.imageQuality || imageQualitySelect.value;
         aspectRatioSelect.value = prefs.aspectRatio || aspectRatioSelect.value;
         imageStyleSelect.value = prefs.imageStyle || imageStyleSelect.value;
-        responseModeSelect.value = prefs.responseMode || responseModeSelect.value;
+        enableImagesToggle.checked = prefs.enableImages !== undefined ? prefs.enableImages : true;
         thinkingLevelSelect.value = prefs.thinkingLevel || thinkingLevelSelect.value;
         includeThoughtsInput.checked = Boolean(prefs.includeThoughts);
         useWebGroundingInput.checked = Boolean(prefs.useWebGrounding);
         useImageGroundingInput.checked = Boolean(prefs.useImageGrounding);
         userVibeInput.value = prefs.vibe || '';
+        
+        updateImageSettingsVisibility();
+    }
+
+    function updateImageSettingsVisibility() {
+        if (enableImagesToggle.checked) {
+            imageSettingsAccordion.style.display = 'flex';
+        } else {
+            imageSettingsAccordion.style.display = 'none';
+            imageSettingsPanel.style.display = 'none';
+            imageSettingsAccordion.classList.remove('active');
+        }
     }
 
     applyPreferences();
@@ -115,10 +129,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     [
         sentimentSelect, personaStyleSelect, languageModeSelect, lengthSelect,
         imageCountInput, imageQualitySelect, aspectRatioSelect, imageStyleSelect,
-        responseModeSelect, thinkingLevelSelect, includeThoughtsInput,
+        enableImagesToggle, thinkingLevelSelect, includeThoughtsInput,
         useWebGroundingInput, useImageGroundingInput, userVibeInput
     ].forEach(el => {
-        el.addEventListener('change', savePreferences);
+        el.addEventListener('change', () => {
+            if (el === enableImagesToggle) {
+                updateImageSettingsVisibility();
+            }
+            savePreferences();
+        });
     });
 
     chrome.storage.local.get(['geminiApiKey'], (result) => {
@@ -245,7 +264,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     async function callGeminiAPI(apiKey, placeInfo, options) {
-        const { sentiment, personaStyle, languageMode, reviewLength, userVibe } = options;
+        const { sentiment, personaStyle, languageMode, reviewLength, userVibe, enableImages } = options;
         const recentReviews = Array.isArray(placeInfo.reviews) ? placeInfo.reviews : [];
 
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
@@ -263,18 +282,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         else if (languageMode === 'local') systemPrompt += `\nWrite the review in the dominant local language implied by the address. Keep the image prompt in English.`;
         else systemPrompt += `\nIf the address implies a non-English speaking country, write the review in the dominant local language of that region, but keep the image prompt in English.`;
 
-        const userPrompt = `
+        let userPrompt = `
         Place Name: ${placeInfo.name}
         Address: ${placeInfo.address}
         Place Category: ${placeInfo.category || 'Not specified'}
         Rating: ${placeInfo.rating || 'Not specified'}
         Recent Reviews Context: ${recentReviews.join(' || ')}
         
-        Task 1: Write an authentic, human-like ${sentiment} review. ${lengthInstruction} ${vibeInstruction}
-        Task 2: Write a descriptive image generation prompt matching the atmosphere described.
+        Task 1: Write an authentic, human-like ${sentiment} review. ${lengthInstruction} ${vibeInstruction}`;
 
-        Return strictly as a JSON object with keys "review" and "image_prompt".
-        `;
+        if (enableImages) {
+            userPrompt += `\n        Task 2: Write a descriptive image generation prompt matching the atmosphere described.\n
+        Return strictly as a JSON object with keys "review" and "image_prompt".`;
+        } else {
+            userPrompt += `\n
+        Return strictly as a JSON object with the key "review".`;
+        }
 
         const payload = {
             contents: [{ parts: [{ text: userPrompt }] }],
@@ -333,17 +356,74 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
     
-    // Generate Pollinations URL
-    function generateImageUrl(prompt, options, seed) {
-        const urlPrompt = encodeURIComponent(prompt.substring(0, 800));
-        let params = `?seed=${seed}&width=${options.width}&height=${options.height}&model=flux&nologo=true&enhance=true`;
-        return `https://image.pollinations.ai/prompt/${urlPrompt}${params}`;
-    }
+    async function callGeminiImageAPI(apiKey, promptText, options) {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key=${apiKey}`;
+        
+        const styleMap = {
+            photorealistic: 'photorealistic, real-life details, natural textures',
+            cinematic: 'cinematic composition, dramatic lighting, wide dynamic range',
+            'golden-hour': 'golden hour sunlight, warm tones, soft glow',
+            'night-vibrant': 'vibrant night scene, neon accents, rich contrast'
+        };
 
-    function getDimensions(aspectRatio) {
-        const [w, h] = aspectRatio.split(':').map(Number);
-        const base = 1024;
-        return { width: Math.round((w/h) * base), height: base };
+        const styleHint = styleMap[options.imageStyle] || styleMap.photorealistic;
+        const aspectHint = options.aspectRatio ? `Aspect ratio: ${options.aspectRatio}.` : '';
+        const sizeHint = options.imageQuality ? `Output size: ${options.imageQuality}.` : '';
+        const searchHint = options.useWebGrounding ? 'Use Google Search grounding for factual environment details.' : '';
+        const imageSearchHint = options.useImageGrounding ? 'Use image search grounding for visual references, but avoid people sourced from search.' : '';
+
+        const fullPrompt = `${promptText}. Style guidance: ${styleHint}. ${aspectHint} ${sizeHint} ${searchHint} ${imageSearchHint}`.trim();
+
+        const payload = {
+            contents: [{ parts: [{ text: fullPrompt }] }],
+            generationConfig: {
+                responseModalities: ['Image'],
+                imageConfig: {
+                    aspectRatio: options.aspectRatio || '1:1',
+                    imageSize: options.imageQuality || '1K'
+                }
+            }
+        };
+
+        if (options.useWebGrounding || options.useImageGrounding) {
+            const searchTypes = {};
+            if (options.useWebGrounding) searchTypes.webSearch = {};
+            if (options.useImageGrounding) searchTypes.imageSearch = {};
+            payload.tools = [{ googleSearch: { searchTypes } }];
+        }
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error?.message || 'Image generation request failed');
+        }
+
+        const data = await response.json();
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        for (const part of parts) {
+            const inlineData = part.inlineData || part.inline_data;
+            if (inlineData?.data) {
+                const mimeType = inlineData.mimeType || inlineData.mime_type || 'image/png';
+                const base64 = inlineData.data;
+                const byteCharacters = atob(base64);
+                const byteArrays = [];
+                for (let offset = 0; offset < byteCharacters.length; offset += 512) {
+                    const slice = byteCharacters.slice(offset, offset + 512);
+                    const byteNumbers = new Array(slice.length);
+                    for (let i = 0; i < slice.length; i++) {
+                        byteNumbers[i] = slice.charCodeAt(i);
+                    }
+                    byteArrays.push(new Uint8Array(byteNumbers));
+                }
+                return new Blob(byteArrays, { type: mimeType });
+            }
+        }
+        throw new Error('No image context returned from Gemini model.');
     }
 
     generateBtn.addEventListener('click', async () => {
@@ -357,7 +437,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        const responseMode = responseModeSelect.value;
+        const enableImages = enableImagesToggle.checked;
         const imgCount = parseInt(imageCountInput.value, 10) || 1;
         
         generateBtn.disabled = true;
@@ -372,58 +452,88 @@ document.addEventListener('DOMContentLoaded', async () => {
                 personaStyle: personaStyleSelect.value,
                 languageMode: languageModeSelect.value,
                 reviewLength: lengthSelect.value,
-                userVibe: userVibeInput.value.trim()
+                userVibe: userVibeInput.value.trim(),
+                enableImages: enableImages
             });
 
             const reviewText = result.review || 'No review generated';
-            const promptText = result.image_prompt || 'A scenic view of the location';
+            const promptText = result.image_prompt || '';
 
             reviewOutput.value = reviewText;
             promptOutput.value = promptText;
 
             // Auto-Copy review to clipboard natively
-            if (responseMode !== 'image-only') {
-                reviewOutputContainer.style.display = 'block';
-                const copied = await copyToClipboard(reviewText);
-                if (!copied) {
-                    statusMessage.textContent = 'Review generated. Auto-copy is blocked by browser policy, use "Copy Review".';
-                    statusMessage.classList.remove('hidden');
-                }
-            } else {
-                reviewOutputContainer.style.display = 'none';
+            reviewOutputContainer.style.display = 'block';
+            const copied = await copyToClipboard(reviewText);
+            if (!copied) {
+                statusMessage.textContent = 'Review generated. Auto-copy is blocked by browser policy, use "Copy Review".';
+                statusMessage.classList.remove('hidden');
             }
             
-            if (responseMode !== 'text-only') {
+            if (enableImages) {
                 promptOutputContainer.style.display = 'block';
-                const dims = getDimensions(aspectRatioSelect.value);
+                
+                const imageOptions = {
+                    imageStyle: imageStyleSelect.value,
+                    aspectRatio: aspectRatioSelect.value,
+                    imageQuality: imageQualitySelect.value,
+                    useWebGrounding: useWebGroundingInput.checked,
+                    useImageGrounding: useImageGroundingInput.checked
+                };
                 
                 for(let i=0; i < imgCount; i++) {
-                    const seed = Math.floor(Math.random() * 1000000);
-                    const imgUrl = generateImageUrl(promptText, dims, seed);
-                    
                     const imgWrapper = document.createElement('div');
                     imgWrapper.style.marginBottom = '10px';
                     
                     const img = document.createElement('img');
-                    img.src = imgUrl;
                     img.style.width = '100%';
                     img.style.borderRadius = '4px';
+                    img.style.minHeight = '150px';
+                    img.style.backgroundColor = '#e8eaed';
+                    img.alt = `Generating Image ${i+1}...`;
                     
                     const dlBtn = document.createElement('button');
-                    dlBtn.textContent = `Download Image ${i+1}`;
-                    dlBtn.style.backgroundColor = '#0b8043';
+                    dlBtn.textContent = `Generating...`;
+                    dlBtn.style.backgroundColor = '#80868b';
                     dlBtn.style.marginTop = '4px';
-                    dlBtn.onclick = () => {
-                        chrome.downloads.download({
-                            url: imgUrl,
-                            filename: `Maps/${currentPlaceInfo.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${i+1}.png`,
-                            saveAs: false
-                        });
-                    };
+                    dlBtn.disabled = true;
 
                     imgWrapper.appendChild(img);
                     imgWrapper.appendChild(dlBtn);
                     imagesContainer.appendChild(imgWrapper);
+
+                    // Fetch natively from Gemini 3.1 Flash Image Preview API concurrently
+                    callGeminiImageAPI(apiKey, promptText, imageOptions)
+                        .then(blob => {
+                            const blobUrl = URL.createObjectURL(blob);
+                            img.src = blobUrl;
+                            img.style.minHeight = 'auto';
+                            
+                            dlBtn.textContent = `Download Image ${i+1}`;
+                            dlBtn.style.backgroundColor = '#0b8043';
+                            dlBtn.disabled = false;
+                            
+                            const filename = `Maps_${currentPlaceInfo.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${i+1}.jpg`;
+                            
+                            // Reliable manual download logic
+                            dlBtn.onclick = () => {
+                                const a = document.createElement('a');
+                                a.href = blobUrl;
+                                a.download = filename;
+                                a.click();
+                            };
+
+                            // Auto-download as soon as it's ready
+                            const autoA = document.createElement('a');
+                            autoA.href = blobUrl;
+                            autoA.download = filename;
+                            autoA.click();
+                        })
+                        .catch(err => {
+                            console.error('Image gen error:', err);
+                            img.alt = `Failed to load image ${i+1}`;
+                            dlBtn.textContent = 'Failed to Load';
+                        });
                 }
             } else {
                 promptOutputContainer.style.display = 'none';
