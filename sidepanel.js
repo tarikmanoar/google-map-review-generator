@@ -31,6 +31,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const imagesContainer = document.getElementById('imagesContainer');
     const reviewOutputContainer = document.getElementById('reviewOutputContainer');
     const promptOutputContainer = document.getElementById('promptOutputContainer');
+    const refreshPlaceBtn = document.getElementById('refreshPlaceBtn');
 
     let currentPlaceInfo = null;
 
@@ -135,27 +136,66 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function scrapePlaceDOM() {
         try {
-            // Robust check
-            const nameEl = document.querySelector('h1.fontHeadlineLarge, h1');
-            const name = nameEl ? nameEl.innerText : null;
-            if (!name) return { error: "No place Name found. Ensure a specific place is open." };
+            // Remove dependency on obfuscated classes that change quickly or match list views
+            // Find all h1s and choose the one that is actually visible and NOT a generic search header like "Results"
+            const h1Elements = Array.from(document.querySelectorAll('h1'));
+            const validH1s = h1Elements.filter(el => {
+                if (el.offsetParent === null) return false; // Hidden
+                const text = el.innerText.trim();
+                if (!text || text === 'Results' || text === 'Top results' || text === 'Search results') return false;
+                return true;
+            });
+
+            // The main place title usually has large font classes like fontHeadlineLarge or DUwDvf
+            const nameEl = validH1s.find(el => el.classList.contains('fontHeadlineLarge') || el.classList.contains('DUwDvf')) || validH1s[0];
+            const name = nameEl ? nameEl.innerText.trim() : null;
+
+            if (!name) return { error: "No specific place opened. Please click on a single place from the results." };
+
+            // Find the container that holds this h1 to scope our search (avoids pulling the address of the first item in the list)
+            // A place detail pane usually has role="main" or contains the place name
+            let detailPane = document;
+            if (nameEl) {
+                let parent = nameEl.parentElement;
+                while (parent && parent !== document.body) {
+                    if (parent.getAttribute('role') === 'main' || parent.querySelector('button[data-tooltip="Copy address"]')) {
+                        detailPane = parent;
+                        break;
+                    }
+                    parent = parent.parentElement;
+                }
+            }
 
             let address = "Address not found";
-            const addressButtons = Array.from(document.querySelectorAll('button')).filter(b => b.getAttribute('aria-label')?.includes('Address:'));
-            if (addressButtons.length > 0) {
-                address = addressButtons[0].getAttribute('aria-label').replace('Address: ', '').trim();
+            // Look for buttons containing 'Address:' in aria-label or tooltip "Copy address"
+            const addressBtn = detailPane.querySelector('button[data-tooltip="Copy address"], button[data-item-id="address"]') || 
+                Array.from(detailPane.querySelectorAll('button')).find(b => b.getAttribute('aria-label')?.includes('Address:'));
+            
+            if (addressBtn && addressBtn.getAttribute('aria-label')) {
+                address = addressBtn.getAttribute('aria-label').replace('Address: ', '').trim();
+            } else {
+                // Secondary check for address often below place name
+                const subt = detailPane.querySelector('.fontBodyMedium.mgr77e, .Io6YTe, .W4Eejd');
+                if (subt && subt.innerText.length > 2) {
+                    address = subt.innerText.trim();
+                }
             }
 
             let rating = "";
-            const ratingEl = document.querySelector('span[aria-label*="stars"]');
+            const ratingEl = detailPane.querySelector('span[aria-label*="stars"], span[aria-label*="star"], div[aria-label*="stars"]');
             if (ratingEl) rating = ratingEl.getAttribute('aria-label');
 
-            let category = "";
-            const categoryEl = document.querySelector('.DkEaL') || document.querySelector('.fontBodyMedium.mgr77e'); 
-            if (categoryEl) category = categoryEl.innerText;
+            let category = "Not specified";
+            const categoryBtn = detailPane.querySelector('button[jsaction="pane.rating.category"]') || detailPane.querySelector('.DkEaL, .fontBodyMedium');
+            if (categoryBtn) {
+                category = categoryBtn.innerText;
+            } else {
+                const possibleCat = Array.from(detailPane.querySelectorAll('button')).find(b => b.innerText.includes('·') && b.innerText.length < 40);
+                if (possibleCat) category = possibleCat.innerText;
+            }
 
-            const reviewEls = document.querySelectorAll('.MyEned, .wiI7pd');
-            const reviews = Array.from(reviewEls).map(el => el.innerText).slice(0, 8);
+            const reviewEls = detailPane.querySelectorAll('.MyEned, .wiI7pd');
+            const reviews = Array.from(reviewEls).map(el => el.innerText.trim()).filter(t => t.length > 0).slice(0, 8);
 
             return { name, address, rating, category, reviews };
         } catch (e) {
@@ -164,9 +204,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function extractMapData() {
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
             const currentTab = tabs[0];
-            if (!currentTab || !currentTab.url.includes("google.com/maps")) {
+            if (!currentTab || !currentTab.url || !currentTab.url.includes("google.com/maps")) {
                 showError("Please open a location on Google Maps first.");
                 generateBtn.disabled = true;
                 return;
@@ -194,8 +234,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // Call on load and also add a manual refresh if needed or just on load
+    // Call on load and also add a manual refresh if needed
     extractMapData();
+
+    refreshPlaceBtn.addEventListener('click', () => {
+        statusMessage.classList.add('hidden');
+        placeNameEl.textContent = 'Loading...';
+        placeAddressEl.textContent = '';
+        extractMapData();
+    });
 
     async function callGeminiAPI(apiKey, placeInfo, options) {
         const { sentiment, personaStyle, languageMode, reviewLength, userVibe } = options;
@@ -374,8 +421,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     autoPasteBtn.addEventListener('click', () => {
         const reviewText = reviewOutput.value;
         if (!reviewText) return;
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            const tabUrl = tabs[0].url;
+        chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+            const tabUrl = tabs[0] ? tabs[0].url : '';
             if (tabUrl && tabUrl.includes("google.com/maps")) {
                 chrome.scripting.executeScript({
                     target: { tabId: tabs[0].id },

@@ -173,7 +173,10 @@
     <div id="statusMessage" class="error hidden"></div>
 
     <div id="placeCard" class="card hidden">
-        <label>Detected Place</label>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <label style="margin: 0;">Detected Place</label>
+            <button id="refreshPlaceBtn" style="width: auto; padding: 4px 8px; font-size: 11px; background: #e8eaed; color: #202124; margin: 0;">Refresh Data</button>
+        </div>
         <div class="place-info">
             <strong id="placeName">Loading...</strong>
             <span id="placeAddress"></span>
