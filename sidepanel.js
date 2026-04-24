@@ -312,8 +312,24 @@ document.addEventListener('DOMContentLoaded', async () => {
             await navigator.clipboard.writeText(text);
             return true;
         } catch (err) {
-            console.error('Clipboard write failed:', err);
-            return false;
+            // Fallback for contexts where Clipboard API is blocked (e.g. lost user activation).
+            try {
+                const tempArea = document.createElement('textarea');
+                tempArea.value = text;
+                tempArea.setAttribute('readonly', '');
+                tempArea.style.position = 'fixed';
+                tempArea.style.top = '-9999px';
+                tempArea.style.left = '-9999px';
+                document.body.appendChild(tempArea);
+                tempArea.focus();
+                tempArea.select();
+
+                const copied = document.execCommand('copy');
+                document.body.removeChild(tempArea);
+                return copied;
+            } catch (_fallbackErr) {
+                return false;
+            }
         }
     }
     
@@ -368,7 +384,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             // Auto-Copy review to clipboard natively
             if (responseMode !== 'image-only') {
                 reviewOutputContainer.style.display = 'block';
-                await copyToClipboard(reviewText);
+                const copied = await copyToClipboard(reviewText);
+                if (!copied) {
+                    statusMessage.textContent = 'Review generated. Auto-copy is blocked by browser policy, use "Copy Review".';
+                    statusMessage.classList.remove('hidden');
+                }
             } else {
                 reviewOutputContainer.style.display = 'none';
             }
