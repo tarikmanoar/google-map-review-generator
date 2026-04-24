@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maps AI Review</title>
+    <style>
+        :root {
+            --primary: #1a73e8;
+            --bg: #f8f9fa;
+            --text: #202124;
+            --border: #dadce0;
+            --radius: 8px;
+        }
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            width: 100%;
+            box-sizing: border-box;
+            margin: 0;
+            padding: 16px;
+            background-color: var(--bg);
+            color: var(--text);
+        }
+        h2 {
+            font-size: 18px;
+            margin-top: 0;
+            margin-bottom: 16px;
+            color: var(--primary);
+            text-align: center;
+        }
+        .card {
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 12px;
+            margin-bottom: 12px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        }
+        .field-group {
+            margin-bottom: 12px;
+            box-sizing: border-box;
+            width: 100%;
+        }
+        label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            color: #5f6368;
+        }
+        input, select, textarea {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 8px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-family: inherit;
+            font-size: 14px;
+        }
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+        button {
+            width: 100%;
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: var(--radius);
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background-color: #1557b0;
+        }
+        button:disabled {
+            background-color: #a0c3ff;
+            cursor: not-allowed;
+        }
+        .place-info {
+            font-size: 13px;
+        }
+        .place-info strong {
+            display: block;
+            font-size: 15px;
+            margin-bottom: 4px;
+            color: var(--text);
+        }
+        .hidden {
+            display: none !important;
+        }
+        .error {
+            color: #d93025;
+            font-size: 12px;
+            margin-bottom: 12px;
+        }
+        .loader {
+            text-align: center;
+            font-size: 13px;
+            color: var(--primary);
+            display: none;
+            margin: 10px 0;
+        }
+        .helper-text {
+            font-size: 12px;
+            color: #5f6368;
+            margin-top: 4px;
+            line-height: 1.4;
+        }
+        
+        /* Accordion Styles */
+        .accordion {
+            background-color: #f1f3f4;
+            color: #202124;
+            cursor: pointer;
+            padding: 10px;
+            width: 100%;
+            border: 1px solid var(--border);
+            text-align: left;
+            outline: none;
+            font-size: 13px;
+            font-weight: 600;
+            border-radius: var(--radius);
+            transition: 0.4s;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .accordion:hover {
+            background-color: #e8eaed;
+        }
+        .accordion:after {
+            content: '\02795'; /* Unicode character for "plus" sign (+) */
+            font-size: 10px;
+            color: #5f6368;
+        }
+        .accordion.active:after {
+            content: "\2796"; /* Unicode character for "minus" sign (-) */
+        }
+        .panel {
+            padding: 0 10px;
+            background-color: white;
+            display: none;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-top: none;
+            border-radius: 0 0 var(--radius) var(--radius);
+            margin-top: -10px;
+            margin-bottom: 12px;
+            padding-top: 10px;
+        }
+        .accordion.active {
+            border-radius: var(--radius) var(--radius) 0 0;
+        }
+    </style>
+</head>
+<body>
+    <h2>AI Review Generator</h2>
+
+    <div class="card">
+        <button class="accordion">API Settings (Gemini)</button>
+        <div class="panel" style="display: block;">
+            <div class="field-group" style="margin-top: 8px;">
+                <label for="apiKey">Gemini API Key (Saved locally)</label>
+                <input type="password" id="apiKey" placeholder="Enter your Gemini API key...">
+            </div>
+        </div>
+    </div>
+
+    <div id="statusMessage" class="error hidden"></div>
+
+    <div id="placeCard" class="card hidden">
+        <label>Detected Place</label>
+        <div class="place-info">
+            <strong id="placeName">Loading...</strong>
+            <span id="placeAddress"></span>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="field-group">
+            <label for="sentiment">Review Type</label>
+            <select id="sentiment">
+                <option value="Positive">Positive (5 Stars)</option>
+                <option value="Average">Average (3 Stars)</option>
+                <option value="Negative">Negative (1 Star)</option>
+                <option value="Funny">Funny & Witty</option>
+            </select>
+        </div>
+
+        <button class="accordion">Advanced Review Settings</button>
+        <div class="panel">
+            <div class="field-group" style="margin-top: 8px;">
+                <label for="personaStyle">Persona Style</label>
+                <select id="personaStyle">
+                    <option value="Local Guide" selected>Local Guide</option>
+                    <option value="Food Critic">Food Critic</option>
+                    <option value="Traveler">Traveler</option>
+                    <option value="Family Visitor">Family Visitor</option>
+                    <option value="Business Visitor">Business Visitor</option>
+                </select>
+            </div>
+            <div class="field-group">
+                <label for="languageMode">Review Language</label>
+                <select id="languageMode">
+                    <option value="auto" selected>Auto (Local if relevant)</option>
+                    <option value="en">English</option>
+                    <option value="local">Dominant local language</option>
+                </select>
+            </div>
+            <div class="field-group">
+                <label for="reviewLength">Review Length</label>
+                <select id="reviewLength">
+                    <option value="short">Short (1-2 sentences)</option>
+                    <option value="medium" selected>Medium (3-4 sentences)</option>
+                    <option value="long">Long (Detailed paragraph)</option>
+                </select>
+            </div>
+            <div class="field-group">
+                <label for="responseMode">Response Mode</label>
+                <select id="responseMode">
+                    <option value="text-image" selected>Text + Image</option>
+                    <option value="image-only">Image Only</option>
+                    <option value="text-only">Text Only</option>
+                </select>
+            </div>
+            <div class="field-group">
+                <label for="thinkingLevel">Thinking Level</label>
+                <select id="thinkingLevel">
+                    <option value="minimal" selected>Minimal</option>
+                    <option value="high">High</option>
+                </select>
+            </div>
+            <div class="field-group">
+                <label>
+                    <input type="checkbox" id="includeThoughts"> Include thoughts in response
+                </label>
+            </div>
+            <div class="field-group">
+                <label for="userVibe">Additional Context (Optional)</label>
+                <textarea id="userVibe" placeholder="e.g., 'Loved the lasagna, but waiter was rude'"></textarea>
+            </div>
+        </div>
+
+        <button class="accordion">Image Generation Settings</button>
+        <div class="panel">
+            <div class="field-group" style="margin-top: 8px;">
+                <label for="imageCount">Number of Images</label>
+                <input type="number" id="imageCount" min="1" max="4" value="1">
+            </div>
+            <div class="field-group">
+                <label for="imageQuality">Image Quality</label>
+                <select id="imageQuality">
+                    <option value="512">0.5K (512)</option>
+                    <option value="1K" selected>1K</option>
+                    <option value="2K">2K</option>
+                    <option value="4K">4K</option>
+                </select>
+            </div>
+            <div class="field-group">
+                <label for="aspectRatio">Aspect Ratio</label>
+                <select id="aspectRatio">
+                    <option value="1:1" selected>1:1</option>
+                    <option value="1:4">1:4</option>
+                    <option value="1:8">1:8</option>
+                    <option value="2:3">2:3</option>
+                    <option value="3:2">3:2</option>
+                    <option value="3:4">3:4</option>
+                    <option value="4:1">4:1</option>
+                    <option value="4:3">4:3</option>
+                    <option value="4:5">4:5</option>
+                    <option value="5:4">5:4</option>
+                    <option value="8:1">8:1</option>
+                    <option value="9:16">9:16</option>
+                    <option value="16:9">16:9</option>
+                    <option value="21:9">21:9</option>
+                </select>
+            </div>
+            <div class="field-group">
+                <label for="imageStyle">Image Style</label>
+                <select id="imageStyle">
+                    <option value="photorealistic" selected>Photorealistic</option>
+                    <option value="cinematic">Cinematic</option>
+                    <option value="golden-hour">Golden Hour</option>
+                    <option value="night-vibrant">Night Vibrant</option>
+                </select>
+            </div>
+            <div class="field-group">
+                <label>
+                    <input type="checkbox" id="useWebGrounding"> Ground image with Google web results
+                </label>
+            </div>
+            <div class="field-group">
+                <label>
+                    <input type="checkbox" id="useImageGrounding"> Ground image with Google image results
+                </label>
+            </div>
+            <div class="field-group">
+                <label for="referenceImages">Reference Images (optional)</label>
+                <input type="file" id="referenceImages" accept="image/*" multiple>
+            </div>
+        </div>
+
+        <button id="generateBtn" style="margin-top: 12px;">Generate AI Review</button>
+        <div id="loader" class="loader">Generating with Gemini AI...</div>
+    </div>
+
+    <div id="resultsCard" class="card hidden">
+        <div class="field-group" id="reviewOutputContainer">
+            <label for="reviewOutput">Generated Review</label>
+            <textarea id="reviewOutput" readonly></textarea>
+            <button id="autoPasteBtn" style="margin-top: 8px; background-color: #0f9d58;">✨ Auto-Paste to Maps</button>
+            <button id="copyReviewBtn" style="margin-top: 8px; background-color: #5f6368;">Copy Review</button>
+        </div>
+        <div class="field-group" id="promptOutputContainer">
+            <label for="promptOutput">Image Generation Prompt</label>
+            <textarea id="promptOutput" readonly></textarea>
+        </div>
+        
+        <div id="imagesContainer" class="field-group preview-container">
+            <!-- Images will be injected here -->
+        </div>
+    </div>
+
+    <script src="sidepanel.js"></script>
+</body>
+</html>

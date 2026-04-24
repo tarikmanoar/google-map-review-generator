@@ -7,7 +7,8 @@
     "activeTab",
     "scripting",
     "storage",
-    "downloads"
+    "downloads",
+    "sidePanel"
   ],
   "host_permissions": [
     "https://www.google.com/maps/*",
@@ -15,8 +16,13 @@
     "https://image.pollinations.ai/*",
     "https://api.imgbb.com/*"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "Generate AI Review"
+    "default_title": "Open Maps AI Review"
   }
 }
