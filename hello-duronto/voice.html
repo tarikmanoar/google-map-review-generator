@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gemini Live Voice — Duronto proxy</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 2rem 1rem;
+      background: #121232;
+      color: #eee;
+      min-height: 100vh;
+    }
+    h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+    .sub { color: #888; font-size: 0.85rem; margin-bottom: 1.5rem; }
+    .controls { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 1rem; }
+    button {
+      background: #4a7ce9; color: white; border: 0;
+      padding: 0.9rem 1.75rem; border-radius: 999px;
+      font-size: 1rem; cursor: pointer; transition: background 0.15s;
+    }
+    button:hover { background: #5b8df0; }
+    button.recording { background: #e94a4a; }
+    button.recording:hover { background: #f05b5b; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .status {
+      padding: 0.5rem 0.9rem;
+      background: rgba(255,255,255,0.05);
+      border-radius: 6px;
+      font-size: 0.9rem;
+      flex: 1;
+    }
+    .status.live::before { content: "● "; color: #5ec85e; }
+    .status.speaking::before { content: "● "; color: #4a7ce9; }
+    .status.error::before { content: "● "; color: #e94a4a; }
+    .log {
+      height: 380px; overflow-y: auto;
+      background: rgba(0,0,0,0.25);
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      line-height: 1.55;
+    }
+    .log > div { padding: 0.2rem 0; }
+    .user { color: #8ab4ff; }
+    .model { color: #a0e0a0; }
+    .system { color: #888; font-style: italic; font-size: 0.85rem; }
+    .hint { color: #666; font-size: 0.8rem; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Gemini Live Voice</h1>
+  <div class="sub">Via the Duronto proxy — mic in, audio out, transcripts below.</div>
+
+  <div class="controls">
+    <button id="btn">Start call</button>
+    <div class="status" id="status">Idle</div>
+  </div>
+
+  <div class="log" id="log"></div>
+  <p class="hint">Open this page via <code>http://localhost:&lt;port&gt;</code> (mic access needs http://localhost or https). Try <code>npx http-server</code> or <code>python3 -m http.server</code>.</p>
+
+  <script type="module">
+    const PROXY_WS = "wss://hello1.durontobd.net/gemini-proxy/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
+    const API_KEY = "E0EW2cEmxT@EE9K5E81X2l-4IE12qTqQVQ1-2_SShEIAHOzv9Ab1MlZ1c";
+    const MODEL = "models/gemini-2.5-flash-native-audio-preview-09-2025";
+    const VOICE = "Kore";
+    const SYSTEM_INSTRUCTION =
+      "You are a friendly, concise voice assistant. " +
+      "Speak naturally. If the user speaks Bengali, reply in Bengali. Otherwise reply in English.";
+
+    const $ = (id) => document.getElementById(id);
+    const btn = $("btn");
+    const statusEl = $("status");
+    const logEl = $("log");
+
+    const state = {
+      ws: null,
+      inCtx: null,
+      outCtx: null,
+      micStream: null,
+      micSource: null,
+      processor: null,
+      playbackCursor: 0,
+      active: false,
+      userBuf: "",
+      modelBuf: "",
+      activeSources: new Set(),
+    };
+
+    function setStatus(text, cls = "") {
+      statusEl.textContent = text;
+      statusEl.className = "status" + (cls ? " " + cls : "");
+    }
+
+    function log(cls, text) {
+      const div = document.createElement("div");
+      div.className = cls;
+      div.textContent = text;
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    const b64encode = (uint8) => {
+      let s = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < uint8.length; i += chunk) {
+        s += String.fromCharCode.apply(null, uint8.subarray(i, i + chunk));
+      }
+      return btoa(s);
+    };
+
+    const b64decode = (str) => {
+      const bin = atob(str);
+      const u8 = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      return u8;
+    };
+
+    const wsSend = (obj) => {
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify(obj));
+      }
+    };
+
+    async function startCall() {
+      state.active = true;
+      btn.textContent = "End call";
+      btn.classList.add("recording");
+      setStatus("Connecting…");
+      log("system", "Connecting to proxy…");
+
+      state.ws = new WebSocket(`${PROXY_WS}?key=${API_KEY}`);
+
+      state.ws.addEventListener("open", () => {
+        setStatus("Setting up…");
+        wsSend({
+          setup: {
+            model: MODEL,
+            generationConfig: {
+              responseModalities: ["AUDIO"],
+              speechConfig: {
+                voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE } },
+              },
+            },
+            systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+            inputAudioTranscription: {},
+            outputAudioTranscription: {},
+          },
+        });
+      });
+
+      state.ws.addEventListener("message", async (ev) => {
+        const raw = typeof ev.data === "string" ? ev.data : await ev.data.text();
+        let msg;
+        try { msg = JSON.parse(raw); } catch { return; }
+        await handleServerMessage(msg);
+      });
+
+      state.ws.addEventListener("close", (ev) => {
+        log("system", `Socket closed (${ev.code})${ev.reason ? ": " + ev.reason : ""}`);
+        teardown();
+      });
+
+      state.ws.addEventListener("error", () => {
+        setStatus("WebSocket error", "error");
+        log("system", "WebSocket error — see console.");
+      });
+    }
+
+    async function handleServerMessage(msg) {
+      if (msg.setupComplete) {
+        setStatus("Listening", "live");
+        log("system", "Setup complete. Speak whenever you're ready.");
+        await startMic();
+        return;
+      }
+
+      const sc = msg.serverContent;
+      if (!sc) return;
+
+      if (sc.inputTranscription?.text) state.userBuf += sc.inputTranscription.text;
+      if (sc.outputTranscription?.text) state.modelBuf += sc.outputTranscription.text;
+
+      const parts = sc.modelTurn?.parts ?? [];
+      for (const p of parts) {
+        const data = p.inlineData?.data;
+        if (data) {
+          setStatus("Speaking", "speaking");
+          playAudioChunk(b64decode(data));
+        }
+      }
+
+      if (sc.interrupted) {
+        for (const src of state.activeSources) {
+          try { src.stop(); } catch {}
+        }
+        state.activeSources.clear();
+        state.playbackCursor = 0;
+      }
+
+      if (sc.turnComplete) {
+        if (state.userBuf.trim()) log("user", "🗣  " + state.userBuf.trim());
+        if (state.modelBuf.trim()) log("model", "🤖 " + state.modelBuf.trim());
+        state.userBuf = "";
+        state.modelBuf = "";
+      }
+    }
+
+    async function startMic() {
+      state.inCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      state.outCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+      await state.inCtx.resume();
+      await state.outCtx.resume();
+
+      state.micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+      state.micSource = state.inCtx.createMediaStreamSource(state.micStream);
+      state.processor = state.inCtx.createScriptProcessor(4096, 1, 1);
+
+      let chunksSent = 0;
+      let peakLevel = 0;
+      let lastDebug = Date.now();
+
+      state.processor.onaudioprocess = (e) => {
+        if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+        const f32 = e.inputBuffer.getChannelData(0);
+
+        let sum = 0;
+        for (let i = 0; i < f32.length; i++) sum += f32[i] * f32[i];
+        const rms = Math.sqrt(sum / f32.length);
+        if (rms > peakLevel) peakLevel = rms;
+
+        const i16 = new Int16Array(f32.length);
+        for (let i = 0; i < f32.length; i++) {
+          const s = Math.max(-1, Math.min(1, f32[i]));
+          i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+        wsSend({
+          realtimeInput: {
+            mediaChunks: [{
+              data: b64encode(new Uint8Array(i16.buffer)),
+              mimeType: "audio/pcm;rate=16000",
+            }],
+          },
+        });
+        chunksSent++;
+
+        const now = Date.now();
+        if (now - lastDebug > 2000) {
+          const bar = "█".repeat(Math.min(20, Math.round(peakLevel * 100)));
+          log("system", `mic: ${chunksSent} chunks sent, peak ${peakLevel.toFixed(3)} ${bar}`);
+          chunksSent = 0;
+          peakLevel = 0;
+          lastDebug = now;
+        }
+      };
+
+      state.micSource.connect(state.processor);
+      state.processor.connect(state.inCtx.destination);
+    }
+
+    function playAudioChunk(uint8) {
+      const i16 = new Int16Array(uint8.buffer, uint8.byteOffset, uint8.byteLength / 2);
+      const f32 = new Float32Array(i16.length);
+      for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 0x8000;
+
+      const buf = state.outCtx.createBuffer(1, f32.length, 24000);
+      buf.copyToChannel(f32, 0);
+
+      const src = state.outCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(state.outCtx.destination);
+
+      const now = state.outCtx.currentTime;
+      const start = Math.max(now, state.playbackCursor);
+      src.start(start);
+      state.playbackCursor = start + buf.duration;
+      state.activeSources.add(src);
+
+      src.addEventListener("ended", () => {
+        state.activeSources.delete(src);
+        if (state.activeSources.size === 0) setStatus("Listening", "live");
+      });
+    }
+
+    function teardown() {
+      state.active = false;
+      btn.textContent = "Start call";
+      btn.classList.remove("recording");
+      setStatus("Idle");
+
+      try { state.processor?.disconnect(); } catch {}
+      try { state.micSource?.disconnect(); } catch {}
+      state.micStream?.getTracks().forEach((t) => t.stop());
+      try { state.inCtx?.close(); } catch {}
+      try { state.outCtx?.close(); } catch {}
+      try { state.ws?.close(); } catch {}
+
+      state.processor = null;
+      state.micSource = null;
+      state.micStream = null;
+      state.inCtx = null;
+      state.outCtx = null;
+      state.ws = null;
+      state.activeSources.clear();
+      state.playbackCursor = 0;
+      state.userBuf = "";
+      state.modelBuf = "";
+    }
+
+    btn.addEventListener("click", () => {
+      if (state.active) {
+        teardown();
+        return;
+      }
+      startCall().catch((err) => {
+        log("system", "Failed to start: " + err.message);
+        teardown();
+      });
+    });
+  </script>
+</body>
+</html>

@@ -217,11 +217,26 @@
     <h2>AI Review Generator</h2>
 
     <div class="card">
-        <button class="accordion">API Settings (Gemini)</button>
+        <button class="accordion">API Settings</button>
         <div class="panel" style="display: block;">
             <div class="field-group" style="margin-top: 8px;">
+                <label for="provider">AI Provider</label>
+                <select id="provider">
+                    <option value="gemini">Gemini API (direct)</option>
+                    <option value="proxy">Duronto Proxy (no key needed)</option>
+                    <option value="openai">OpenAI API</option>
+                </select>
+            </div>
+            <div class="field-group" id="geminiKeyGroup">
                 <label for="apiKey">Gemini API Key (Saved locally)</label>
                 <input type="password" id="apiKey" placeholder="Enter your Gemini API key...">
+            </div>
+            <div class="field-group hidden" id="openaiKeyGroup">
+                <label for="openaiApiKey">OpenAI API Key (Saved locally)</label>
+                <input type="password" id="openaiApiKey" placeholder="sk-...">
+            </div>
+            <div class="field-group hidden" id="proxyInfo">
+                <p class="helper-text">Using the embedded Duronto Cloudflare Worker proxy. No API key required. Image generation is unavailable with this provider.</p>
             </div>
         </div>
     </div>

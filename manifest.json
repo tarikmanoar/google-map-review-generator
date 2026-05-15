@@ -14,8 +14,8 @@
   "host_permissions": [
     "https://www.google.com/maps/*",
     "https://generativelanguage.googleapis.com/*",
-    "https://image.pollinations.ai/*",
-    "https://api.imgbb.com/*"
+    "https://api.openai.com/*",
+    "https://duronto-gemini-proxy.focustaxationwa.workers.dev/*"
   ],
   "background": {
     "service_worker": "background.js"
