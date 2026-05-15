@@ -1,10 +1,19 @@
 document.addEventListener('DOMContentLoaded', async () => {
     const PREFS_STORAGE_KEY = 'mapsReviewPrefs';
     const PROXY_WORKER_URL = 'https://duronto-gemini-proxy.focustaxationwa.workers.dev/';
+    const COPILOT_BASE_URL = 'https://copilot-proxy-api.manoar.bd/api/copilot';
+    const COPILOT_DEFAULT_MODEL = 'gpt-5-mini';
 
     const providerSelect = document.getElementById('provider');
     const apiKeyInput = document.getElementById('apiKey');
     const openaiApiKeyInput = document.getElementById('openaiApiKey');
+    const copilotApiKeyInput = document.getElementById('copilotApiKey');
+    const copilotModelSelect = document.getElementById('copilotModel');
+    const copilotTemperatureInput = document.getElementById('copilotTemperature');
+    const copilotTempValueEl = document.getElementById('copilotTempValue');
+    const reloadCopilotModelsBtn = document.getElementById('reloadCopilotModelsBtn');
+    const copilotModelsStatus = document.getElementById('copilotModelsStatus');
+    const copilotSection = document.getElementById('copilotSection');
     const geminiKeyGroup = document.getElementById('geminiKeyGroup');
     const openaiKeyGroup = document.getElementById('openaiKeyGroup');
     const proxyInfo = document.getElementById('proxyInfo');
@@ -73,7 +82,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             includeThoughts: false,
             useWebGrounding: false,
             useImageGrounding: false,
-            vibe: ''
+            vibe: '',
+            copilotModel: COPILOT_DEFAULT_MODEL,
+            copilotTemperature: 0.2,
+            copilotModels: [COPILOT_DEFAULT_MODEL]
         };
     }
 
@@ -93,7 +105,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             includeThoughts: includeThoughtsInput.checked,
             useWebGrounding: useWebGroundingInput.checked,
             useImageGrounding: useImageGroundingInput.checked,
-            vibe: userVibeInput.value
+            vibe: userVibeInput.value,
+            copilotModel: copilotModelSelect.value,
+            copilotTemperature: parseFloat(copilotTemperatureInput.value),
+            copilotModels: Array.from(copilotModelSelect.options).map(o => o.value)
         };
         localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs));
     }
@@ -116,13 +131,35 @@ document.addEventListener('DOMContentLoaded', async () => {
         useImageGroundingInput.checked = Boolean(prefs.useImageGrounding);
         userVibeInput.value = prefs.vibe || '';
 
+        const savedModels = Array.isArray(prefs.copilotModels) && prefs.copilotModels.length
+            ? prefs.copilotModels
+            : [COPILOT_DEFAULT_MODEL];
+        populateCopilotModels(savedModels, prefs.copilotModel || COPILOT_DEFAULT_MODEL);
+
+        const temp = typeof prefs.copilotTemperature === 'number' ? prefs.copilotTemperature : 0.2;
+        copilotTemperatureInput.value = String(temp);
+        copilotTempValueEl.textContent = temp.toFixed(1);
+
         updateProviderVisibility();
         updateImageSettingsVisibility();
     }
 
+    function populateCopilotModels(modelIds, selected) {
+        const ids = (modelIds && modelIds.length) ? modelIds : [COPILOT_DEFAULT_MODEL];
+        copilotModelSelect.innerHTML = '';
+        for (const id of ids) {
+            const opt = document.createElement('option');
+            opt.value = id;
+            opt.textContent = id;
+            copilotModelSelect.appendChild(opt);
+        }
+        const target = selected && ids.includes(selected) ? selected : ids[0];
+        copilotModelSelect.value = target;
+    }
+
     function updateImageSettingsVisibility() {
         const provider = providerSelect.value;
-        const imagesAvailable = provider !== 'proxy';
+        const imagesAvailable = provider !== 'proxy' && provider !== 'copilot';
         const enabled = imagesAvailable && enableImagesToggle.checked;
 
         const switchContainer = enableImagesToggle.closest('.switch-container');
@@ -143,9 +180,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const provider = providerSelect.value;
         geminiKeyGroup.classList.toggle('hidden', provider !== 'gemini');
         openaiKeyGroup.classList.toggle('hidden', provider !== 'openai');
+        copilotSection.classList.toggle('hidden', provider !== 'copilot');
         proxyInfo.classList.toggle('hidden', provider !== 'proxy');
 
-        const labels = { gemini: 'Gemini AI', proxy: 'Duronto Proxy', openai: 'OpenAI' };
+        const labels = { gemini: 'Gemini AI', proxy: 'Duronto Proxy', openai: 'OpenAI', copilot: 'Copilot Proxy' };
         loader.textContent = `Generating with ${labels[provider] || 'AI'}...`;
     }
 
@@ -155,12 +193,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         providerSelect, sentimentSelect, personaStyleSelect, languageModeSelect, lengthSelect,
         imageCountInput, imageQualitySelect, aspectRatioSelect, imageStyleSelect,
         enableImagesToggle, thinkingLevelSelect, includeThoughtsInput,
-        useWebGroundingInput, useImageGroundingInput, userVibeInput
+        useWebGroundingInput, useImageGroundingInput, userVibeInput,
+        copilotModelSelect
     ].forEach(el => {
         el.addEventListener('change', () => {
             if (el === providerSelect) {
                 updateProviderVisibility();
                 updateImageSettingsVisibility();
+                if (providerSelect.value === 'copilot' && copilotApiKeyInput.value.trim()) {
+                    loadCopilotModels();
+                }
             } else if (el === enableImagesToggle) {
                 updateImageSettingsVisibility();
             }
@@ -168,10 +210,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     });
 
+    copilotTemperatureInput.addEventListener('input', () => {
+        const t = parseFloat(copilotTemperatureInput.value);
+        copilotTempValueEl.textContent = (isNaN(t) ? 0.2 : t).toFixed(1);
+    });
+    copilotTemperatureInput.addEventListener('change', savePreferences);
+    reloadCopilotModelsBtn.addEventListener('click', loadCopilotModels);
+
     // ---------- API key persistence ----------
-    chrome.storage.local.get(['geminiApiKey', 'openaiApiKey'], (result) => {
+    chrome.storage.local.get(['geminiApiKey', 'openaiApiKey', 'copilotApiKey'], (result) => {
         if (result.geminiApiKey) apiKeyInput.value = result.geminiApiKey;
         if (result.openaiApiKey) openaiApiKeyInput.value = result.openaiApiKey;
+        if (result.copilotApiKey) {
+            copilotApiKeyInput.value = result.copilotApiKey;
+            if (providerSelect.value === 'copilot') loadCopilotModels();
+        }
     });
 
     apiKeyInput.addEventListener('change', (e) => {
@@ -180,6 +233,50 @@ document.addEventListener('DOMContentLoaded', async () => {
     openaiApiKeyInput.addEventListener('change', (e) => {
         chrome.storage.local.set({ openaiApiKey: e.target.value });
     });
+    copilotApiKeyInput.addEventListener('change', (e) => {
+        chrome.storage.local.set({ copilotApiKey: e.target.value });
+        if (e.target.value.trim()) loadCopilotModels();
+    });
+
+    async function loadCopilotModels() {
+        const apiKey = copilotApiKeyInput.value.trim();
+        if (!apiKey) {
+            copilotModelsStatus.textContent = 'Enter API key to load models.';
+            return;
+        }
+        copilotModelsStatus.textContent = 'Loading models...';
+        try {
+            const response = await fetch(`${COPILOT_BASE_URL}/models`, {
+                headers: { 'Authorization': `Bearer ${apiKey}` }
+            });
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.error?.message || errData.error || `HTTP ${response.status}`);
+            }
+            const data = await response.json();
+            const list = Array.isArray(data?.data) ? data.data
+                       : Array.isArray(data?.models) ? data.models
+                       : Array.isArray(data) ? data
+                       : [];
+            const ids = list
+                .map(m => typeof m === 'string' ? m : m?.id || m?.name)
+                .filter(Boolean);
+            if (!ids.length) {
+                copilotModelsStatus.textContent = 'No models returned. Using default.';
+                populateCopilotModels([COPILOT_DEFAULT_MODEL], COPILOT_DEFAULT_MODEL);
+                return;
+            }
+            const previous = copilotModelSelect.value;
+            const selected = ids.includes(previous) ? previous
+                           : ids.includes(COPILOT_DEFAULT_MODEL) ? COPILOT_DEFAULT_MODEL
+                           : ids[0];
+            populateCopilotModels(ids, selected);
+            copilotModelsStatus.textContent = `Loaded ${ids.length} model${ids.length === 1 ? '' : 's'}.`;
+            savePreferences();
+        } catch (err) {
+            copilotModelsStatus.textContent = `Failed to load models: ${err.message}`;
+        }
+    }
 
     function showError(msg) {
         statusMessage.textContent = msg;
@@ -503,6 +600,40 @@ Speak only the review text, nothing else.`;
         return tryParseJsonText(text);
     }
 
+    // ---------- Provider: Copilot Proxy ----------
+    async function generateReviewViaCopilot(apiKey, model, temperature, placeInfo, options) {
+        const systemPrompt = buildReviewSystemPrompt(options);
+        const userPrompt = buildReviewUserPrompt(placeInfo, options, { includeImagePrompt: options.enableImages });
+
+        const response = await fetch(`${COPILOT_BASE_URL}/chat`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
+                temperature,
+                response_format: { type: 'json_object' }
+            })
+        });
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error?.message || errData.error || `Copilot request failed (HTTP ${response.status})`);
+        }
+        const data = await response.json();
+        const text = data?.choices?.[0]?.message?.content
+                  || data?.message?.content
+                  || data?.content
+                  || data?.text;
+        return tryParseJsonText(text);
+    }
+
     function aspectRatioToOpenAISize(ratio) {
         // OpenAI's images endpoint supports a limited set; map to nearest.
         const r = (ratio || '1:1').trim();
@@ -585,7 +716,7 @@ Speak only the review text, nothing else.`;
     // ---------- Main generate handler ----------
     generateBtn.addEventListener('click', async () => {
         const provider = providerSelect.value;
-        const enableImages = enableImagesToggle.checked && provider !== 'proxy';
+        const enableImages = enableImagesToggle.checked && provider !== 'proxy' && provider !== 'copilot';
 
         if (!currentPlaceInfo) {
             showError('No place info. Map might not be loaded properly.');
@@ -594,12 +725,17 @@ Speak only the review text, nothing else.`;
 
         let geminiKey = apiKeyInput.value.trim();
         let openaiKey = openaiApiKeyInput.value.trim();
+        let copilotKey = copilotApiKeyInput.value.trim();
         if (provider === 'gemini' && !geminiKey) {
             showError('Please enter your Gemini API Key.');
             return;
         }
         if (provider === 'openai' && !openaiKey) {
             showError('Please enter your OpenAI API Key.');
+            return;
+        }
+        if (provider === 'copilot' && !copilotKey) {
+            showError('Please enter your Copilot Proxy API Key.');
             return;
         }
 
@@ -629,6 +765,16 @@ Speak only the review text, nothing else.`;
                 result = await generateReviewViaGemini(geminiKey, currentPlaceInfo, options);
             } else if (provider === 'proxy') {
                 result = await generateReviewViaProxy(currentPlaceInfo, options);
+            } else if (provider === 'copilot') {
+                const model = copilotModelSelect.value || COPILOT_DEFAULT_MODEL;
+                const temperature = parseFloat(copilotTemperatureInput.value);
+                result = await generateReviewViaCopilot(
+                    copilotKey,
+                    model,
+                    isNaN(temperature) ? 0.2 : temperature,
+                    currentPlaceInfo,
+                    options
+                );
             } else {
                 result = await generateReviewViaOpenAI(openaiKey, currentPlaceInfo, options);
             }

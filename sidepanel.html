@@ -225,6 +225,7 @@
                     <option value="gemini">Gemini API (direct)</option>
                     <option value="proxy">Duronto Proxy (no key needed)</option>
                     <option value="openai">OpenAI API</option>
+                    <option value="copilot">Copilot Proxy</option>
                 </select>
             </div>
             <div class="field-group" id="geminiKeyGroup">
@@ -234,6 +235,27 @@
             <div class="field-group hidden" id="openaiKeyGroup">
                 <label for="openaiApiKey">OpenAI API Key (Saved locally)</label>
                 <input type="password" id="openaiApiKey" placeholder="sk-...">
+            </div>
+            <div class="hidden" id="copilotSection">
+                <div class="field-group">
+                    <label for="copilotApiKey">Copilot Proxy API Key (Saved locally)</label>
+                    <input type="password" id="copilotApiKey" placeholder="Enter your Copilot proxy API key...">
+                </div>
+                <div class="field-group">
+                    <label for="copilotModel">Model</label>
+                    <div style="display: flex; gap: 4px;">
+                        <select id="copilotModel" style="flex: 1;">
+                            <option value="gpt-5-mini">gpt-5-mini</option>
+                        </select>
+                        <button id="reloadCopilotModelsBtn" type="button" title="Reload model list" style="width: auto; padding: 4px 10px; font-size: 13px; background: #e8eaed; color: #202124;">↻</button>
+                    </div>
+                    <p class="helper-text" id="copilotModelsStatus"></p>
+                </div>
+                <div class="field-group">
+                    <label for="copilotTemperature">Temperature: <span id="copilotTempValue">0.2</span></label>
+                    <input type="range" id="copilotTemperature" min="0" max="2" step="0.1" value="0.2">
+                </div>
+                <p class="helper-text">OpenAI-compatible chat proxy. Image generation is unavailable with this provider.</p>
             </div>
             <div class="field-group hidden" id="proxyInfo">
                 <p class="helper-text">Using the embedded Duronto Cloudflare Worker proxy. No API key required. Image generation is unavailable with this provider.</p>
