@@ -1,12 +1,20 @@
 document.addEventListener('DOMContentLoaded', async () => {
     const PREFS_STORAGE_KEY = 'mapsReviewPrefs';
-    const PROXY_WORKER_URL = 'https://duronto-gemini-proxy.focustaxationwa.workers.dev/';
     const COPILOT_BASE_URL = 'https://copilot-proxy-api.manoar.bd/api/copilot';
     const COPILOT_DEFAULT_MODEL = 'gpt-5-mini';
+    const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
+    const OPENAI_DEFAULT_MODEL = 'gpt-4o-mini';
 
     const providerSelect = document.getElementById('provider');
     const apiKeyInput = document.getElementById('apiKey');
     const openaiApiKeyInput = document.getElementById('openaiApiKey');
+    const openaiBaseUrlInput = document.getElementById('openaiBaseUrl');
+    const openaiModelSelect = document.getElementById('openaiModel');
+    const openaiTemperatureInput = document.getElementById('openaiTemperature');
+    const openaiTempValueEl = document.getElementById('openaiTempValue');
+    const reloadOpenaiModelsBtn = document.getElementById('reloadOpenaiModelsBtn');
+    const openaiModelsStatus = document.getElementById('openaiModelsStatus');
+    const openaiSection = document.getElementById('openaiSection');
     const copilotApiKeyInput = document.getElementById('copilotApiKey');
     const copilotModelSelect = document.getElementById('copilotModel');
     const copilotTemperatureInput = document.getElementById('copilotTemperature');
@@ -15,8 +23,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const copilotModelsStatus = document.getElementById('copilotModelsStatus');
     const copilotSection = document.getElementById('copilotSection');
     const geminiKeyGroup = document.getElementById('geminiKeyGroup');
-    const openaiKeyGroup = document.getElementById('openaiKeyGroup');
-    const proxyInfo = document.getElementById('proxyInfo');
     const generateBtn = document.getElementById('generateBtn');
     const statusMessage = document.getElementById('statusMessage');
     const placeCard = document.getElementById('placeCard');
@@ -83,6 +89,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             useWebGrounding: false,
             useImageGrounding: false,
             vibe: '',
+            openaiBaseUrl: OPENAI_DEFAULT_BASE_URL,
+            openaiModel: OPENAI_DEFAULT_MODEL,
+            openaiTemperature: 0.7,
+            openaiModels: [OPENAI_DEFAULT_MODEL],
             copilotModel: COPILOT_DEFAULT_MODEL,
             copilotTemperature: 0.2,
             copilotModels: [COPILOT_DEFAULT_MODEL]
@@ -106,6 +116,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             useWebGrounding: useWebGroundingInput.checked,
             useImageGrounding: useImageGroundingInput.checked,
             vibe: userVibeInput.value,
+            openaiBaseUrl: openaiBaseUrlInput.value.trim() || OPENAI_DEFAULT_BASE_URL,
+            openaiModel: openaiModelSelect.value,
+            openaiTemperature: parseFloat(openaiTemperatureInput.value),
+            openaiModels: Array.from(openaiModelSelect.options).map(o => o.value),
             copilotModel: copilotModelSelect.value,
             copilotTemperature: parseFloat(copilotTemperatureInput.value),
             copilotModels: Array.from(copilotModelSelect.options).map(o => o.value)
@@ -131,11 +145,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         useImageGroundingInput.checked = Boolean(prefs.useImageGrounding);
         userVibeInput.value = prefs.vibe || '';
 
+        openaiBaseUrlInput.value = prefs.openaiBaseUrl || OPENAI_DEFAULT_BASE_URL;
+        const savedOpenaiModels = Array.isArray(prefs.openaiModels) && prefs.openaiModels.length
+            ? prefs.openaiModels
+            : [OPENAI_DEFAULT_MODEL];
+        populateModelSelect(openaiModelSelect, savedOpenaiModels, prefs.openaiModel || OPENAI_DEFAULT_MODEL, OPENAI_DEFAULT_MODEL);
+        const openaiTemp = typeof prefs.openaiTemperature === 'number' ? prefs.openaiTemperature : 0.7;
+        openaiTemperatureInput.value = String(openaiTemp);
+        openaiTempValueEl.textContent = openaiTemp.toFixed(1);
+
         const savedModels = Array.isArray(prefs.copilotModels) && prefs.copilotModels.length
             ? prefs.copilotModels
             : [COPILOT_DEFAULT_MODEL];
-        populateCopilotModels(savedModels, prefs.copilotModel || COPILOT_DEFAULT_MODEL);
-
+        populateModelSelect(copilotModelSelect, savedModels, prefs.copilotModel || COPILOT_DEFAULT_MODEL, COPILOT_DEFAULT_MODEL);
         const temp = typeof prefs.copilotTemperature === 'number' ? prefs.copilotTemperature : 0.2;
         copilotTemperatureInput.value = String(temp);
         copilotTempValueEl.textContent = temp.toFixed(1);
@@ -144,22 +166,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateImageSettingsVisibility();
     }
 
-    function populateCopilotModels(modelIds, selected) {
-        const ids = (modelIds && modelIds.length) ? modelIds : [COPILOT_DEFAULT_MODEL];
-        copilotModelSelect.innerHTML = '';
+    function populateModelSelect(selectEl, modelIds, selected, fallback) {
+        const ids = (modelIds && modelIds.length) ? modelIds : [fallback];
+        selectEl.innerHTML = '';
         for (const id of ids) {
             const opt = document.createElement('option');
             opt.value = id;
             opt.textContent = id;
-            copilotModelSelect.appendChild(opt);
+            selectEl.appendChild(opt);
         }
-        const target = selected && ids.includes(selected) ? selected : ids[0];
-        copilotModelSelect.value = target;
+        selectEl.value = selected && ids.includes(selected) ? selected : ids[0];
     }
 
     function updateImageSettingsVisibility() {
         const provider = providerSelect.value;
-        const imagesAvailable = provider !== 'proxy' && provider !== 'copilot';
+        const imagesAvailable = provider !== 'copilot';
         const enabled = imagesAvailable && enableImagesToggle.checked;
 
         const switchContainer = enableImagesToggle.closest('.switch-container');
@@ -179,11 +200,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     function updateProviderVisibility() {
         const provider = providerSelect.value;
         geminiKeyGroup.classList.toggle('hidden', provider !== 'gemini');
-        openaiKeyGroup.classList.toggle('hidden', provider !== 'openai');
+        openaiSection.classList.toggle('hidden', provider !== 'openai');
         copilotSection.classList.toggle('hidden', provider !== 'copilot');
-        proxyInfo.classList.toggle('hidden', provider !== 'proxy');
 
-        const labels = { gemini: 'Gemini AI', proxy: 'Duronto Proxy', openai: 'OpenAI', copilot: 'Copilot Proxy' };
+        const labels = { gemini: 'Gemini AI', openai: 'OpenAI', copilot: 'Copilot Proxy' };
         loader.textContent = `Generating with ${labels[provider] || 'AI'}...`;
     }
 
@@ -194,7 +214,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         imageCountInput, imageQualitySelect, aspectRatioSelect, imageStyleSelect,
         enableImagesToggle, thinkingLevelSelect, includeThoughtsInput,
         useWebGroundingInput, useImageGroundingInput, userVibeInput,
-        copilotModelSelect
+        openaiModelSelect, copilotModelSelect
     ].forEach(el => {
         el.addEventListener('change', () => {
             if (el === providerSelect) {
@@ -202,6 +222,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 updateImageSettingsVisibility();
                 if (providerSelect.value === 'copilot' && copilotApiKeyInput.value.trim()) {
                     loadCopilotModels();
+                } else if (providerSelect.value === 'openai' && openaiApiKeyInput.value.trim()) {
+                    loadOpenaiModels();
                 }
             } else if (el === enableImagesToggle) {
                 updateImageSettingsVisibility();
@@ -209,6 +231,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             savePreferences();
         });
     });
+
+    openaiBaseUrlInput.addEventListener('change', () => {
+        chrome.storage.local.set({ openaiBaseUrl: openaiBaseUrlInput.value.trim() });
+        savePreferences();
+        if (openaiApiKeyInput.value.trim()) loadOpenaiModels();
+    });
+    openaiTemperatureInput.addEventListener('input', () => {
+        const t = parseFloat(openaiTemperatureInput.value);
+        openaiTempValueEl.textContent = (isNaN(t) ? 0.7 : t).toFixed(1);
+    });
+    openaiTemperatureInput.addEventListener('change', savePreferences);
+    reloadOpenaiModelsBtn.addEventListener('click', loadOpenaiModels);
 
     copilotTemperatureInput.addEventListener('input', () => {
         const t = parseFloat(copilotTemperatureInput.value);
@@ -218,13 +252,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     reloadCopilotModelsBtn.addEventListener('click', loadCopilotModels);
 
     // ---------- API key persistence ----------
-    chrome.storage.local.get(['geminiApiKey', 'openaiApiKey', 'copilotApiKey'], (result) => {
+    chrome.storage.local.get(['geminiApiKey', 'openaiApiKey', 'openaiBaseUrl', 'copilotApiKey'], (result) => {
         if (result.geminiApiKey) apiKeyInput.value = result.geminiApiKey;
         if (result.openaiApiKey) openaiApiKeyInput.value = result.openaiApiKey;
-        if (result.copilotApiKey) {
-            copilotApiKeyInput.value = result.copilotApiKey;
-            if (providerSelect.value === 'copilot') loadCopilotModels();
-        }
+        if (result.openaiBaseUrl) openaiBaseUrlInput.value = result.openaiBaseUrl;
+        if (result.copilotApiKey) copilotApiKeyInput.value = result.copilotApiKey;
+
+        if (providerSelect.value === 'openai' && openaiApiKeyInput.value.trim()) loadOpenaiModels();
+        if (providerSelect.value === 'copilot' && copilotApiKeyInput.value.trim()) loadCopilotModels();
     });
 
     apiKeyInput.addEventListener('change', (e) => {
@@ -232,50 +267,77 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     openaiApiKeyInput.addEventListener('change', (e) => {
         chrome.storage.local.set({ openaiApiKey: e.target.value });
+        if (e.target.value.trim()) loadOpenaiModels();
     });
     copilotApiKeyInput.addEventListener('change', (e) => {
         chrome.storage.local.set({ copilotApiKey: e.target.value });
         if (e.target.value.trim()) loadCopilotModels();
     });
 
-    async function loadCopilotModels() {
-        const apiKey = copilotApiKeyInput.value.trim();
+    function getOpenaiBaseUrl() {
+        return (openaiBaseUrlInput.value.trim() || OPENAI_DEFAULT_BASE_URL).replace(/\/+$/, '');
+    }
+
+    function parseModelList(data) {
+        const list = Array.isArray(data?.data) ? data.data
+                   : Array.isArray(data?.models) ? data.models
+                   : Array.isArray(data) ? data
+                   : [];
+        return list
+            .map(m => typeof m === 'string' ? m : m?.id || m?.name)
+            .filter(Boolean);
+    }
+
+    async function loadModelsInto(selectEl, statusEl, url, apiKey, fallbackModel) {
         if (!apiKey) {
-            copilotModelsStatus.textContent = 'Enter API key to load models.';
+            statusEl.textContent = 'Enter API key to load models.';
             return;
         }
-        copilotModelsStatus.textContent = 'Loading models...';
+        statusEl.textContent = 'Loading models...';
         try {
-            const response = await fetch(`${COPILOT_BASE_URL}/models`, {
+            const response = await fetch(url, {
                 headers: { 'Authorization': `Bearer ${apiKey}` }
             });
             if (!response.ok) {
                 const errData = await response.json().catch(() => ({}));
                 throw new Error(errData.error?.message || errData.error || `HTTP ${response.status}`);
             }
-            const data = await response.json();
-            const list = Array.isArray(data?.data) ? data.data
-                       : Array.isArray(data?.models) ? data.models
-                       : Array.isArray(data) ? data
-                       : [];
-            const ids = list
-                .map(m => typeof m === 'string' ? m : m?.id || m?.name)
-                .filter(Boolean);
+            const ids = parseModelList(await response.json());
             if (!ids.length) {
-                copilotModelsStatus.textContent = 'No models returned. Using default.';
-                populateCopilotModels([COPILOT_DEFAULT_MODEL], COPILOT_DEFAULT_MODEL);
+                statusEl.textContent = 'No models returned. Using default.';
+                populateModelSelect(selectEl, [fallbackModel], fallbackModel, fallbackModel);
                 return;
             }
-            const previous = copilotModelSelect.value;
+            const previous = selectEl.value;
             const selected = ids.includes(previous) ? previous
-                           : ids.includes(COPILOT_DEFAULT_MODEL) ? COPILOT_DEFAULT_MODEL
+                           : ids.includes(fallbackModel) ? fallbackModel
                            : ids[0];
-            populateCopilotModels(ids, selected);
-            copilotModelsStatus.textContent = `Loaded ${ids.length} model${ids.length === 1 ? '' : 's'}.`;
+            populateModelSelect(selectEl, ids, selected, fallbackModel);
+            statusEl.textContent = `Loaded ${ids.length} model${ids.length === 1 ? '' : 's'}.`;
             savePreferences();
         } catch (err) {
-            copilotModelsStatus.textContent = `Failed to load models: ${err.message}`;
+            statusEl.textContent = `Failed to load models: ${err.message}`;
         }
+    }
+
+    function loadOpenaiModels() {
+        return loadModelsInto(
+            openaiModelSelect,
+            openaiModelsStatus,
+            `${getOpenaiBaseUrl()}/models`,
+            openaiApiKeyInput.value.trim(),
+            OPENAI_DEFAULT_MODEL
+        );
+    }
+
+    function loadCopilotModels() {
+        return loadModelsInto(
+            copilotModelSelect,
+            copilotModelsStatus,
+            `${COPILOT_BASE_URL}/models`,
+            copilotApiKeyInput.value.trim(),
+            COPILOT_DEFAULT_MODEL
+        );
     }
 
     function showError(msg) {
@@ -528,81 +590,49 @@ Return strictly as a JSON object with keys "review" and "image_prompt".`;
         throw new Error('No image returned from Gemini.');
     }
 
-    // ---------- Provider: Duronto Proxy ----------
-    async function callProxyWorker(prompt, systemInstruction) {
-        const response = await fetch(PROXY_WORKER_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt, systemInstruction })
-        });
-        if (!response.ok) {
-            const errData = await response.json().catch(() => ({}));
-            throw new Error(errData.error || 'Proxy worker request failed');
-        }
-        const data = await response.json();
-        if (!data.text) throw new Error('Proxy returned empty text');
-        return data.text;
-    }
-
-    async function generateReviewViaProxy(placeInfo, options) {
-        const recentReviews = Array.isArray(placeInfo.reviews) ? placeInfo.reviews : [];
-        const lengthInstruction =
-            options.reviewLength === 'short' ? '1-2 sentences' :
-            options.reviewLength === 'long' ? '5-7 sentences' : '3-4 sentences';
-
-        const systemPrompt =
-            buildReviewSystemPrompt(options) +
-            '\nSpeak only the review text aloud. Do not narrate or add preamble. Do not say "here is your review" or similar.';
-
-        const userPrompt = `Write an authentic, human-like ${options.sentiment} Google Maps review for this place:
-Name: ${placeInfo.name}
-Address: ${placeInfo.address}
-Category: ${placeInfo.category || 'Not specified'}
-Rating: ${placeInfo.rating || 'Not specified'}
-Recent reviews: ${recentReviews.join(' || ')}
-
-Length: ${lengthInstruction}.
-${options.userVibe ? `Vibe: ${options.userVibe}` : ''}
-
-Speak only the review text, nothing else.`;
-
-        const review = await callProxyWorker(userPrompt, systemPrompt);
-        return { review, image_prompt: '' };
-    }
-
-    // ---------- Provider: OpenAI ----------
-    async function generateReviewViaOpenAI(apiKey, placeInfo, options) {
-        const systemPrompt = buildReviewSystemPrompt(options);
+    // ---------- Provider: OpenAI / compatible ----------
+    async function generateReviewViaOpenAI(apiKey, baseUrl, model, temperature, placeInfo, options) {
+        const systemPrompt = buildReviewSystemPrompt(options) +
+            '\n\nIMPORTANT: Reply ONLY with a single valid JSON object. No prose before or after. No markdown code fences. Start your output with "{" and end with "}".';
         const userPrompt = buildReviewUserPrompt(placeInfo, options, { includeImagePrompt: options.enableImages });
 
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        const response = await fetch(`${baseUrl}/chat/completions`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-                model: 'gpt-4o-mini',
+                model,
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userPrompt }
                 ],
-                response_format: { type: 'json_object' }
+                temperature
             })
         });
 
         if (!response.ok) {
             const errData = await response.json().catch(() => ({}));
-            throw new Error(errData.error?.message || 'OpenAI request failed');
+            throw new Error(errData.error?.message || errData.error || `OpenAI request failed (HTTP ${response.status})`);
         }
         const data = await response.json();
-        const text = data?.choices?.[0]?.message?.content;
-        return tryParseJsonText(text);
+        const text = data?.choices?.[0]?.message?.content
+                  || (typeof data?.message === 'string' ? data.message : data?.message?.content)
+                  || data?.content
+                  || data?.text;
+        if (!text || !text.trim()) throw new Error('OpenAI endpoint returned empty response.');
+        try {
+            return tryParseJsonText(text);
+        } catch (_) {
+            return { review: text.trim(), image_prompt: '' };
+        }
     }
 
     // ---------- Provider: Copilot Proxy ----------
     async function generateReviewViaCopilot(apiKey, model, temperature, placeInfo, options) {
-        const systemPrompt = buildReviewSystemPrompt(options);
+        const systemPrompt = buildReviewSystemPrompt(options) +
+            '\n\nIMPORTANT: Reply ONLY with a single valid JSON object. No prose before or after. No markdown code fences. Start your output with "{" and end with "}".';
         const userPrompt = buildReviewUserPrompt(placeInfo, options, { includeImagePrompt: options.enableImages });
 
         const response = await fetch(`${COPILOT_BASE_URL}/chat`, {
@@ -617,8 +647,7 @@ Speak only the review text, nothing else.`;
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userPrompt }
                 ],
-                temperature,
-                response_format: { type: 'json_object' }
+                temperature
             })
         });
 
@@ -627,11 +656,21 @@ Speak only the review text, nothing else.`;
             throw new Error(errData.error?.message || errData.error || `Copilot request failed (HTTP ${response.status})`);
         }
         const data = await response.json();
-        const text = data?.choices?.[0]?.message?.content
-                  || data?.message?.content
-                  || data?.content
-                  || data?.text;
-        return tryParseJsonText(text);
+
+        let text;
+        if (typeof data?.message === 'string') text = data.message;
+        else if (typeof data?.message?.content === 'string') text = data.message.content;
+        else if (typeof data?.choices?.[0]?.message?.content === 'string') text = data.choices[0].message.content;
+        else if (typeof data?.content === 'string') text = data.content;
+        else if (typeof data?.text === 'string') text = data.text;
+
+        if (!text || !text.trim()) throw new Error('Copilot proxy returned empty response.');
+
+        try {
+            return tryParseJsonText(text);
+        } catch (_) {
+            return { review: text.trim(), image_prompt: '' };
+        }
     }
 
     function aspectRatioToOpenAISize(ratio) {
@@ -642,7 +681,7 @@ Speak only the review text, nothing else.`;
         return '1024x1024';
     }
 
-    async function generateImageViaOpenAI(apiKey, promptText, options) {
+    async function generateImageViaOpenAI(apiKey, baseUrl, promptText, options) {
         const styleMap = {
             photorealistic: 'photorealistic, real-life details, natural textures',
             cinematic: 'cinematic composition, dramatic lighting, wide dynamic range',
@@ -653,7 +692,7 @@ Speak only the review text, nothing else.`;
         const fullPrompt = `${promptText}. Style guidance: ${styleHint}`;
         const quality = (options.imageQuality === '2K' || options.imageQuality === '4K') ? 'high' : 'medium';
 
-        const response = await fetch('https://api.openai.com/v1/images/generations', {
+        const response = await fetch(`${baseUrl}/images/generations`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -716,7 +755,7 @@ Speak only the review text, nothing else.`;
     // ---------- Main generate handler ----------
     generateBtn.addEventListener('click', async () => {
         const provider = providerSelect.value;
-        const enableImages = enableImagesToggle.checked && provider !== 'proxy' && provider !== 'copilot';
+        const enableImages = enableImagesToggle.checked && provider !== 'copilot';
 
         if (!currentPlaceInfo) {
             showError('No place info. Map might not be loaded properly.');
@@ -731,7 +770,7 @@ Speak only the review text, nothing else.`;
             return;
         }
         if (provider === 'openai' && !openaiKey) {
-            showError('Please enter your OpenAI API Key.');
+            showError('Please enter your API Key.');
             return;
         }
         if (provider === 'copilot' && !copilotKey) {
@@ -763,8 +802,6 @@ Speak only the review text, nothing else.`;
             let result;
             if (provider === 'gemini') {
                 result = await generateReviewViaGemini(geminiKey, currentPlaceInfo, options);
-            } else if (provider === 'proxy') {
-                result = await generateReviewViaProxy(currentPlaceInfo, options);
             } else if (provider === 'copilot') {
                 const model = copilotModelSelect.value || COPILOT_DEFAULT_MODEL;
                 const temperature = parseFloat(copilotTemperatureInput.value);
@@ -776,7 +813,17 @@ Speak only the review text, nothing else.`;
                     options
                 );
             } else {
-                result = await generateReviewViaOpenAI(openaiKey, currentPlaceInfo, options);
+                const baseUrl = getOpenaiBaseUrl();
+                const model = openaiModelSelect.value || OPENAI_DEFAULT_MODEL;
+                const temperature = parseFloat(openaiTemperatureInput.value);
+                result = await generateReviewViaOpenAI(
+                    openaiKey,
+                    baseUrl,
+                    model,
+                    isNaN(temperature) ? 0.7 : temperature,
+                    currentPlaceInfo,
+                    options
+                );
             }
 
             const reviewText = result.review || 'No review generated';
@@ -819,7 +866,7 @@ Speak only the review text, nothing else.`;
                     imagesContainer.appendChild(imgWrapper);
 
                     const imageCall = provider === 'openai'
-                        ? generateImageViaOpenAI(openaiKey, promptText, options)
+                        ? generateImageViaOpenAI(openaiKey, getOpenaiBaseUrl(), promptText, options)
                         : generateImageViaGemini(geminiKey, promptText, options);
 
                     imageCall
