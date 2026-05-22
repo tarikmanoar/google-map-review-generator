@@ -711,9 +711,23 @@ Return strictly as a JSON object with keys "review" and "image_prompt".`;
             throw new Error(errData.error?.message || 'OpenAI image request failed');
         }
         const data = await response.json();
-        const b64 = data?.data?.[0]?.b64_json;
-        if (!b64) throw new Error('No image returned from OpenAI.');
-        return base64ToBlob(b64, 'image/png');
+        const item = data?.data?.[0] || {};
+
+        // Some endpoints return inline base64, others return a hosted URL.
+        const b64 = item.b64_json || item.b64 || data?.b64_json;
+        if (b64) return base64ToBlob(b64, 'image/png');
+
+        const imageUrl = item.url || data?.url || item.image_url || item.image;
+        if (imageUrl) {
+            const imgResponse = await fetch(imageUrl);
+            if (!imgResponse.ok) throw new Error(`Image URL fetch failed (HTTP ${imgResponse.status})`);
+            const blob = await imgResponse.blob();
+            if (!blob || blob.size === 0) throw new Error('Fetched image was empty.');
+            return blob;
+        }
+
+        const keys = Object.keys(item).join(', ') || Object.keys(data || {}).join(', ');
+        throw new Error(`No image in response (got keys: ${keys || 'none'}).`);
     }
 
     // ---------- Helpers ----------
