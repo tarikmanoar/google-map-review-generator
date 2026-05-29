@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const COPILOT_DEFAULT_MODEL = 'gpt-5-mini';
     const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
     const OPENAI_DEFAULT_MODEL = 'gpt-4o-mini';
+    const IMGBB_API_KEY = '6dd4a1b8639d6c5641d001cd417608a5';
 
     const providerSelect = document.getElementById('provider');
     const apiKeyInput = document.getElementById('apiKey');
@@ -731,6 +732,37 @@ Return strictly as a JSON object with keys "review" and "image_prompt".`;
     }
 
     // ---------- Helpers ----------
+    async function blobToBase64(blob) {
+        const buffer = await blob.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+        }
+        return btoa(binary);
+    }
+
+    async function uploadImageToImgBB(blob) {
+        const base64Image = await blobToBase64(blob);
+        const formData = new FormData();
+        formData.append('image', base64Image);
+
+        const response = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        if (!result?.success) {
+            throw new Error(result?.error?.message || `ImgBB upload failed (HTTP ${response.status})`);
+        }
+        return {
+            url: result.data.url,
+            displayUrl: result.data.display_url || result.data.url,
+            deleteUrl: result.data.delete_url
+        };
+    }
+
     function base64ToBlob(base64, mimeType) {
         const byteCharacters = atob(base64);
         const byteArrays = [];
@@ -875,8 +907,15 @@ Return strictly as a JSON object with keys "review" and "image_prompt".`;
                     dlBtn.style.marginTop = '4px';
                     dlBtn.disabled = true;
 
+                    const imgbbInfo = document.createElement('div');
+                    imgbbInfo.style.marginTop = '4px';
+                    imgbbInfo.style.fontSize = '11px';
+                    imgbbInfo.style.color = '#5f6368';
+                    imgbbInfo.style.wordBreak = 'break-all';
+
                     imgWrapper.appendChild(img);
                     imgWrapper.appendChild(dlBtn);
+                    imgWrapper.appendChild(imgbbInfo);
                     imagesContainer.appendChild(imgWrapper);
 
                     const imageCall = provider === 'openai'
@@ -903,6 +942,39 @@ Return strictly as a JSON object with keys "review" and "image_prompt".`;
                             autoA.href = blobUrl;
                             autoA.download = filename;
                             autoA.click();
+
+                            imgbbInfo.textContent = 'Uploading to ImgBB…';
+                            uploadImageToImgBB(blob)
+                                .then(({ url }) => {
+                                    imgbbInfo.innerHTML = '';
+                                    const link = document.createElement('a');
+                                    link.href = url;
+                                    link.target = '_blank';
+                                    link.rel = 'noopener noreferrer';
+                                    link.textContent = url;
+                                    link.style.color = '#1a73e8';
+                                    imgbbInfo.appendChild(link);
+
+                                    const copyUrlBtn = document.createElement('button');
+                                    copyUrlBtn.textContent = 'Copy ImgBB URL';
+                                    copyUrlBtn.style.width = 'auto';
+                                    copyUrlBtn.style.padding = '4px 8px';
+                                    copyUrlBtn.style.fontSize = '11px';
+                                    copyUrlBtn.style.backgroundColor = '#5f6368';
+                                    copyUrlBtn.style.marginTop = '4px';
+                                    copyUrlBtn.onclick = async () => {
+                                        await copyToClipboard(url);
+                                        copyUrlBtn.textContent = 'Copied!';
+                                        setTimeout(() => { copyUrlBtn.textContent = 'Copy ImgBB URL'; }, 1500);
+                                    };
+                                    imgbbInfo.appendChild(document.createElement('br'));
+                                    imgbbInfo.appendChild(copyUrlBtn);
+                                })
+                                .catch(err => {
+                                    console.error('ImgBB upload failed:', err);
+                                    imgbbInfo.textContent = `ImgBB upload failed: ${err.message}`;
+                                    imgbbInfo.style.color = '#d93025';
+                                });
                         })
                         .catch(err => {
                             console.error('Image gen error:', err);
