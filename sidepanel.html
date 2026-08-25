@@ -387,10 +387,20 @@
                 </div>
                 <p class="helper-text">OpenAI-compatible chat proxy. Image generation is unavailable with this provider.</p>
             </div>
+            <div class="field-group" style="border-top: 1px solid #e0e0e0; padding-top: 10px; margin-top: 12px;">
+                <label class="inline-check">
+                    <input type="checkbox" id="keepPanelOpen" checked> Keep this panel open on other tabs
+                </label>
+                <p class="helper-text">On: the panel stays put while you switch tabs. Off: it closes when you leave Google Maps, and Chrome only lets you bring it back by clicking the toolbar icon.</p>
+            </div>
         </div>
     </div>
 
     <div id="statusMessage" class="error hidden"></div>
+
+    <div id="offMapsBanner" class="notice hidden">
+        This tab isn't Google Maps, so place detection is paused. Anything already generated is kept.
+    </div>
 
     <div id="placeCard" class="card hidden">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">

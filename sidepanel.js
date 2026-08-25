@@ -128,6 +128,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const reviewOutputContainer = document.getElementById('reviewOutputContainer');
     const promptOutputContainer = document.getElementById('promptOutputContainer');
     const refreshPlaceBtn = document.getElementById('refreshPlaceBtn');
+    const keepPanelOpenInput = document.getElementById('keepPanelOpen');
+    const offMapsBanner = document.getElementById('offMapsBanner');
 
     let currentPlaceInfo = null;
     // The single Image Model input is shared by both image-capable providers,
@@ -510,7 +512,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     reloadCopilotModelsBtn.addEventListener('click', loadCopilotModels);
 
     // ---------- API key persistence ----------
-    chrome.storage.local.get(['geminiApiKey', 'openaiApiKey', 'openaiBaseUrl', 'copilotApiKey', 'imgbbApiKey'], (result) => {
+    chrome.storage.local.get(['geminiApiKey', 'openaiApiKey', 'openaiBaseUrl', 'copilotApiKey', 'imgbbApiKey', 'keepPanelOpen'], (result) => {
         if (result.geminiApiKey) apiKeyInput.value = result.geminiApiKey;
         if (result.openaiApiKey) openaiApiKeyInput.value = result.openaiApiKey;
         if (result.openaiBaseUrl) openaiBaseUrlInput.value = result.openaiBaseUrl;
@@ -520,8 +522,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             imgbbApiKey = result.imgbbApiKey;
         }
 
+        // Lives in chrome.storage (not the localStorage prefs) because the
+        // service worker has to read it too.
+        keepPanelOpenInput.checked = result.keepPanelOpen !== false;
+
         if (providerSelect.value === 'openai' && openaiApiKeyInput.value.trim()) loadOpenaiModels();
         if (providerSelect.value === 'copilot' && copilotApiKeyInput.value.trim()) loadCopilotModels();
+    });
+
+    keepPanelOpenInput.addEventListener('change', () => {
+        chrome.storage.local.set({ keepPanelOpen: keepPanelOpenInput.checked });
     });
 
     apiKeyInput.addEventListener('change', (e) => {
@@ -843,9 +853,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         staleResultsBanner.classList.remove('hidden');
     }
 
+    // With the panel pinned open across tabs it has to say why it went quiet,
+    // rather than looking like it simply stopped detecting places.
+    function markOffMaps(onMaps) {
+        offMapsBanner.classList.toggle('hidden', onMaps);
+    }
+
+    async function refreshTabContext() {
+        const tab = await getPanelTab();
+        markOffMaps(Boolean(tab && self.MapsUrl.isMapsUrl(tab.url)));
+    }
+
     async function extractMapData({ auto = false } = {}) {
         const tab = await getPanelTab();
-        if (!tab || !self.MapsUrl.isMapsUrl(tab.url)) {
+        const onMaps = Boolean(tab && self.MapsUrl.isMapsUrl(tab.url));
+        markOffMaps(onMaps);
+        if (!onMaps) {
             if (!auto) {
                 showError('Please open a location on Google Maps first.');
                 generateBtn.disabled = true;
@@ -900,11 +923,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     chrome.tabs.onUpdated.addListener((tabId, info) => {
         if (panelTabId !== null && tabId !== panelTabId) return;
         if (!info.url && info.status !== 'complete') return;
+        refreshTabContext();
         scheduleRescan();
     });
 
     chrome.tabs.onActivated.addListener(({ tabId }) => {
         panelTabId = tabId;
+        // The banner should flip immediately; the scrape can wait out the debounce.
+        refreshTabContext();
         scheduleRescan();
     });
 
@@ -1066,23 +1092,105 @@ Task: Write ${count === 1 ? 'one authentic, human-like' : `${count} distinct aut
     }
 
     // ---------- Shared request plumbing ----------
-    async function postJson(url, headers, payload) {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...headers },
-            body: JSON.stringify(payload)
-        });
-        if (!response.ok) {
-            const errData = await response.json().catch(() => ({}));
-            const message = errData.error?.message
-                || (typeof errData.error === 'string' ? errData.error : '')
-                || errData.message
-                || `Request failed (HTTP ${response.status})`;
-            const error = new Error(message);
-            error.status = response.status;
+    // An overloaded model (503) or a rate limit (429) is the normal failure
+    // mode for hosted image endpoints and it clears on its own, so those are
+    // retried rather than surfaced as a dead end.
+    const TRANSIENT_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+    const MAX_TRANSIENT_RETRIES = 3;
+    const RETRY_BASE_DELAY_MS = 1500;
+    const MAX_RETRY_DELAY_MS = 20000;
+
+    const STATUS_HINTS = {
+        401: 'check the API key',
+        403: 'the key is not allowed to use this model',
+        404: 'no such model or endpoint',
+        408: 'request timed out',
+        429: 'rate limited',
+        500: 'upstream server error',
+        502: 'bad gateway',
+        503: 'model busy or temporarily unavailable',
+        504: 'upstream timed out'
+    };
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function isTransient(error) {
+        return Boolean(error && (error.isNetworkError || TRANSIENT_STATUSES.has(error.status)));
+    }
+
+    function retryDelayMs(attempt, retryAfter) {
+        // Retry-After comes as either seconds or an HTTP date; honour the
+        // common numeric form and fall back to the backoff curve otherwise.
+        const seconds = parseFloat(retryAfter);
+        if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds * 1000, MAX_RETRY_DELAY_MS);
+        return Math.min(RETRY_BASE_DELAY_MS * Math.pow(2, attempt), MAX_RETRY_DELAY_MS);
+    }
+
+    async function withRetry(run, onRetry) {
+        for (let attempt = 0; ; attempt++) {
+            try {
+                return await run();
+            } catch (error) {
+                if (!isTransient(error) || attempt >= MAX_TRANSIENT_RETRIES) {
+                    if (isTransient(error) && attempt > 0) {
+                        error.message += ` Still failing after ${attempt + 1} attempts.`;
+                    }
+                    throw error;
+                }
+                const wait = retryDelayMs(attempt, error.retryAfter);
+                if (onRetry) onRetry(attempt + 1, MAX_TRANSIENT_RETRIES, wait);
+                await sleep(wait);
+            }
+        }
+    }
+
+    // fetch() rejects with a bare TypeError for offline/DNS/CORS failures;
+    // tag those so the retry layer can tell them apart from a bad response.
+    async function fetchOrThrow(url, init) {
+        try {
+            return await fetch(url, init);
+        } catch (cause) {
+            let host = url;
+            try { host = new URL(url, location.href).host; } catch (_) {}
+            const error = new Error(`Could not reach ${host} (${cause.message}).`);
+            error.isNetworkError = true;
             throw error;
         }
-        return response.json();
+    }
+
+    async function httpError(response, fallback) {
+        const errData = await response.json().catch(() => ({}));
+        const detail = errData.error?.message
+            || (typeof errData.error === 'string' ? errData.error : '')
+            || errData.message
+            || '';
+        const hint = STATUS_HINTS[response.status];
+        const suffix = `(HTTP ${response.status}${hint ? ` – ${hint}` : ''})`;
+        const error = new Error(`${detail || fallback} ${suffix}`);
+        error.status = response.status;
+        error.retryAfter = response.headers.get('Retry-After');
+        return error;
+    }
+
+    // Surfaces backoff in the loader so a slow run doesn't look like a hang.
+    function loaderRetryNotice(what) {
+        return (attempt, max, wait) => {
+            loader.textContent = `${what} busy — retry ${attempt}/${max} in ${Math.ceil(wait / 1000)}s…`;
+        };
+    }
+
+    async function postJson(url, headers, payload, onRetry) {
+        return withRetry(async () => {
+            const response = await fetchOrThrow(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...headers },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) throw await httpError(response, 'Request failed');
+            return response.json();
+        }, onRetry);
     }
 
     // Reasoning controls are the parameter endpoints most often reject, and the
@@ -1093,13 +1201,14 @@ Task: Write ${count === 1 ? 'one authentic, human-like' : `${count} distinct aut
     }
 
     async function postJsonSheddingThinking(url, headers, payload, stripThinking) {
+        const onRetry = loaderRetryNotice('Model');
         try {
-            return await postJson(url, headers, payload);
+            return await postJson(url, headers, payload, onRetry);
         } catch (error) {
             const retriable = (error.status === 400 || error.status === 422)
                 && looksLikeRejectedParam(error.message);
             if (!retriable) throw error;
-            return postJson(url, headers, stripThinking(payload));
+            return postJson(url, headers, stripThinking(payload), onRetry);
         }
     }
 
@@ -1195,17 +1304,16 @@ Task: Write ${count === 1 ? 'one authentic, human-like' : `${count} distinct aut
             payload.tools = [{ googleSearch: { searchTypes } }];
         }
 
-        const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        if (!response.ok) {
-            const errData = await response.json().catch(() => ({}));
-            throw new Error(errData.error?.message || `Gemini image request failed for model "${model}"`);
-        }
+        const data = await withRetry(async () => {
+            const response = await fetchOrThrow(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) throw await httpError(response, `Gemini image request failed for model "${model}"`);
+            return response.json();
+        }, options.onRetry);
 
-        const data = await response.json();
         const responseParts = data?.candidates?.[0]?.content?.parts || [];
         for (const part of responseParts) {
             const inlineData = part.inlineData || part.inline_data;
@@ -1329,24 +1437,19 @@ Task: Write ${count === 1 ? 'one authentic, human-like' : `${count} distinct aut
         return payload;
     }
 
-    async function requestOpenAIImage(apiKey, baseUrl, payload) {
-        const response = await fetch(`${baseUrl}/images/generations`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify(payload)
-        });
-        if (!response.ok) {
-            const errData = await response.json().catch(() => ({}));
-            const message = errData.error?.message || errData.message
-                || `Image request failed for model "${payload.model}" (HTTP ${response.status})`;
-            const error = new Error(message);
-            error.status = response.status;
-            throw error;
-        }
-        return response.json();
+    async function requestOpenAIImage(apiKey, baseUrl, payload, onRetry) {
+        return withRetry(async () => {
+            const response = await fetchOrThrow(`${baseUrl}/images/generations`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) throw await httpError(response, `Image request failed for model "${payload.model}"`);
+            return response.json();
+        }, onRetry);
     }
 
     async function extractOpenAIImageBlob(data) {
@@ -1380,7 +1483,7 @@ Task: Write ${count === 1 ? 'one authentic, human-like' : `${count} distinct aut
 
     // Reference images are only accepted on /images/edits, which plenty of
     // OpenAI-compatible endpoints do not implement - hence the fallback.
-    async function requestOpenAIImageEdit(apiKey, baseUrl, payload, references) {
+    async function requestOpenAIImageEdit(apiKey, baseUrl, payload, references, onRetry) {
         const form = new FormData();
         form.append('model', payload.model);
         form.append('prompt', payload.prompt);
@@ -1393,19 +1496,15 @@ Task: Write ${count === 1 ? 'one authentic, human-like' : `${count} distinct aut
             form.append(field, base64ToBlob(ref.data, ref.mimeType), `reference-${i + 1}.png`);
         });
 
-        const response = await fetch(`${baseUrl}/images/edits`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${apiKey}` },
-            body: form
-        });
-        if (!response.ok) {
-            const errData = await response.json().catch(() => ({}));
-            const error = new Error(errData.error?.message || errData.message
-                || `Image edit failed for model "${payload.model}" (HTTP ${response.status})`);
-            error.status = response.status;
-            throw error;
-        }
-        return response.json();
+        return withRetry(async () => {
+            const response = await fetchOrThrow(`${baseUrl}/images/edits`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${apiKey}` },
+                body: form
+            });
+            if (!response.ok) throw await httpError(response, `Image edit failed for model "${payload.model}"`);
+            return response.json();
+        }, onRetry);
     }
 
     async function generateImageViaOpenAI(apiKey, baseUrl, promptText, options) {
@@ -1415,7 +1514,8 @@ Task: Write ${count === 1 ? 'one authentic, human-like' : `${count} distinct aut
 
         if (references.length) {
             try {
-                return await extractOpenAIImageBlob(await requestOpenAIImageEdit(apiKey, baseUrl, payload, references));
+                return await extractOpenAIImageBlob(
+                    await requestOpenAIImageEdit(apiKey, baseUrl, payload, references, options.onRetry));
             } catch (error) {
                 console.warn('Image edit with references failed, falling back to text-only:', error.message);
             }
@@ -1434,7 +1534,7 @@ Task: Write ${count === 1 ? 'one authentic, human-like' : `${count} distinct aut
         let lastError;
         for (const attempt of attempts) {
             try {
-                const data = await requestOpenAIImage(apiKey, baseUrl, attempt);
+                const data = await requestOpenAIImage(apiKey, baseUrl, attempt, options.onRetry);
                 return await extractOpenAIImageBlob(data);
             } catch (error) {
                 lastError = error;
@@ -1783,9 +1883,50 @@ Task: Write ${count === 1 ? 'one authentic, human-like' : `${count} distinct aut
         }
     }
 
+    // One image failing (a 503, usually) should not cost the whole batch, so a
+    // slot is self-contained and can be re-run on its own.
+    async function runImageSlot(slot, index, ctx, promptText) {
+        const { provider, geminiKey, openaiKey, baseUrl, options, placeSlug } = ctx;
+
+        slot.buttons.innerHTML = '';
+        slot.img.style.display = '';
+        slot.status.style.color = '';
+        slot.status.textContent = 'Generating…';
+
+        const slotOptions = {
+            ...options,
+            onRetry: (attempt, max, wait) => {
+                slot.status.style.color = '#b06000';
+                slot.status.textContent = `Model busy — retry ${attempt}/${max} in ${Math.ceil(wait / 1000)}s…`;
+            }
+        };
+
+        try {
+            const prompt = composeImagePrompt(promptText, slotOptions, index);
+            const raw = provider === 'openai'
+                ? await generateImageViaOpenAI(openaiKey, baseUrl, prompt, slotOptions)
+                : await generateImageViaGemini(geminiKey, prompt, slotOptions);
+            const blob = slotOptions.stripMetadata ? await stripImageMetadata(raw) : raw;
+            attachImageActions(slot, blob, `Maps_${placeSlug}_${index + 1}.png`, slotOptions);
+        } catch (err) {
+            console.error('Image gen error:', err);
+            // A src-less <img> renders as a broken-image glyph, so hide it.
+            slot.img.removeAttribute('src');
+            slot.img.style.display = 'none';
+            slot.status.style.color = '#d93025';
+            slot.status.textContent = `Failed: ${err.message}`;
+
+            const retryBtn = document.createElement('button');
+            retryBtn.textContent = 'Retry this image';
+            retryBtn.style.background = '#5f6368';
+            retryBtn.onclick = () => runImageSlot(slot, index, ctx, promptText);
+            slot.buttons.appendChild(retryBtn);
+        }
+    }
+
     async function renderImages(promptText) {
         if (!lastImageContext || !promptText.trim()) return;
-        const { provider, geminiKey, openaiKey, baseUrl, options, placeSlug } = lastImageContext;
+        const ctx = lastImageContext;
 
         imagesContainer.innerHTML = '';
         const count = Math.max(1, Math.min(4, parseInt(imageCountInput.value, 10) || 1));
@@ -1793,23 +1934,9 @@ Task: Write ${count === 1 ? 'one authentic, human-like' : `${count} distinct aut
 
         let done = 0;
         const tasks = slots.map((slot, i) => async () => {
-            slot.status.textContent = 'Generating…';
-            try {
-                const prompt = composeImagePrompt(promptText, options, i);
-                const raw = provider === 'openai'
-                    ? await generateImageViaOpenAI(openaiKey, baseUrl, prompt, options)
-                    : await generateImageViaGemini(geminiKey, prompt, options);
-                const blob = options.stripMetadata ? await stripImageMetadata(raw) : raw;
-                attachImageActions(slot, blob, `Maps_${placeSlug}_${i + 1}.png`, options);
-            } catch (err) {
-                console.error('Image gen error:', err);
-                slot.img.alt = 'Generation failed';
-                slot.status.textContent = `Failed: ${err.message}`;
-                slot.status.style.color = '#d93025';
-            } finally {
-                done++;
-                loader.textContent = `Rendered ${done} of ${count} image${count === 1 ? '' : 's'}…`;
-            }
+            await runImageSlot(slot, i, ctx, promptText);
+            done++;
+            loader.textContent = `Rendered ${done} of ${count} image${count === 1 ? '' : 's'}…`;
         });
 
         loader.style.display = 'block';

@@ -5,6 +5,21 @@ const { isMapsUrl } = self.MapsUrl;
 const SIDE_PANEL_PATH = 'sidepanel.html';
 const DEFAULT_TITLE = 'Open Maps AI Review';
 const OFF_MAPS_TITLE = 'Maps AI Review works on Google Maps only';
+const KEEP_OPEN_KEY = 'keepPanelOpen';
+
+// chrome.sidePanel.open() requires a user gesture, so a panel closed by
+// leaving Maps cannot be reopened programmatically on the way back - the user
+// would have to click the toolbar icon again. Keeping it enabled everywhere
+// (the panel itself explains when the tab is not Maps) avoids that dead end.
+// The old close-on-leave behaviour is still available via the setting.
+let keepPanelOpen = true;
+
+async function loadSettings() {
+    try {
+        const stored = await chrome.storage.local.get([KEEP_OPEN_KEY]);
+        if (typeof stored[KEEP_OPEN_KEY] === 'boolean') keepPanelOpen = stored[KEEP_OPEN_KEY];
+    } catch (_) {}
+}
 
 // Remembers the last state pushed per tab so repeated navigations inside the
 // Maps SPA don't re-issue identical setOptions calls (which can flicker an
@@ -15,7 +30,7 @@ const appliedState = new Map();
 async function applyPanelState(tabId, url) {
     if (typeof tabId !== 'number' || tabId === chrome.tabs.TAB_ID_NONE) return;
 
-    const shouldEnable = isMapsUrl(url);
+    const shouldEnable = keepPanelOpen || isMapsUrl(url);
     if (appliedState.get(tabId) === shouldEnable) return;
     appliedState.set(tabId, shouldEnable);
 
@@ -40,21 +55,40 @@ async function syncAllTabs() {
     } catch (_) {}
 }
 
-// The panel is never globally available: it is opted in per tab, so it can
-// never appear on a tab we haven't vetted (including tabs that existed before
-// this worker started).
-(async () => {
+// Covers tabs created after this point, which never fire an update we act on
+// before the user switches to them.
+async function applyGlobalDefault() {
     try {
+        if (keepPanelOpen) {
+            await chrome.sidePanel.setOptions({ path: SIDE_PANEL_PATH, enabled: true });
+        } else {
+            await chrome.sidePanel.setOptions({ enabled: false });
+        }
+    } catch (_) {}
+}
+
+async function boot() {
+    await loadSettings();
+    try {
+        // The panel still only *opens* from a Maps tab; see the click handler.
         await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
     } catch (_) {}
-    try {
-        await chrome.sidePanel.setOptions({ enabled: false });
-    } catch (_) {}
+    await applyGlobalDefault();
     await syncAllTabs();
-})();
+}
 
-chrome.runtime.onInstalled.addListener(syncAllTabs);
-chrome.runtime.onStartup.addListener(syncAllTabs);
+boot();
+
+chrome.runtime.onInstalled.addListener(boot);
+chrome.runtime.onStartup.addListener(boot);
+
+chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes[KEEP_OPEN_KEY]) return;
+    keepPanelOpen = changes[KEEP_OPEN_KEY].newValue !== false;
+    // Every cached decision was made under the old setting.
+    appliedState.clear();
+    applyGlobalDefault().then(syncAllTabs);
+});
 
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
     // Maps is a single-page app: place changes surface as info.url updates.
