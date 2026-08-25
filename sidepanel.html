@@ -361,6 +361,13 @@
         <button class="accordion" id="imageSettingsAccordion">Image Generation Settings</button>
         <div class="panel" id="imageSettingsPanel">
             <div class="field-group" style="margin-top: 8px;">
+                <label for="imageModel">Image Model</label>
+                <input type="text" id="imageModel" list="imageModelSuggestions" placeholder="gpt-image-1"
+                       autocomplete="off" autocapitalize="off" spellcheck="false">
+                <datalist id="imageModelSuggestions"></datalist>
+                <p class="helper-text" id="imageModelHint"></p>
+            </div>
+            <div class="field-group">
                 <label for="imageCount">Number of Images</label>
                 <input type="number" id="imageCount" min="1" max="4" value="1">
             </div>

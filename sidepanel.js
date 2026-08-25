@@ -5,6 +5,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
     const OPENAI_DEFAULT_MODEL = 'gpt-4o-mini';
     const IMGBB_API_KEY = '6dd4a1b8639d6c5641d001cd417608a5';
+    const OPENAI_DEFAULT_IMAGE_MODEL = 'gpt-image-1';
+    const GEMINI_DEFAULT_IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
+    // Hints only - the field is free text, because an endpoint's /models list
+    // rarely advertises its image models (and some chat models render images).
+    const IMAGE_MODEL_SUGGESTIONS = {
+        openai: ['gpt-image-1', 'gpt-image-1-mini', 'dall-e-3', 'dall-e-2'],
+        gemini: ['gemini-3.1-flash-image-preview', 'gemini-2.5-flash-image-preview', 'imagen-4.0-generate-001']
+    };
 
     const providerSelect = document.getElementById('provider');
     const apiKeyInput = document.getElementById('apiKey');
@@ -37,6 +45,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const imageQualitySelect = document.getElementById('imageQuality');
     const aspectRatioSelect = document.getElementById('aspectRatio');
     const imageStyleSelect = document.getElementById('imageStyle');
+    const imageModelInput = document.getElementById('imageModel');
+    const imageModelHint = document.getElementById('imageModelHint');
+    const imageModelSuggestions = document.getElementById('imageModelSuggestions');
     const enableImagesToggle = document.getElementById('enableImagesToggle');
     const imageSettingsAccordion = document.getElementById('imageSettingsAccordion');
     const imageSettingsPanel = document.getElementById('imageSettingsPanel');
@@ -58,6 +69,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const refreshPlaceBtn = document.getElementById('refreshPlaceBtn');
 
     let currentPlaceInfo = null;
+    // The single Image Model input is shared by both image-capable providers,
+    // so each provider's choice is remembered separately. '' means "default".
+    let imageModelByProvider = { openai: '', gemini: '' };
+    let imageModelProvider = null;
 
     // ---------- Accordion ----------
     document.querySelectorAll('.accordion').forEach(acc => {
@@ -84,6 +99,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             imageQuality: '1K',
             aspectRatio: '1:1',
             imageStyle: 'photorealistic',
+            openaiImageModel: '',
+            geminiImageModel: '',
             enableImages: true,
             thinkingLevel: 'minimal',
             includeThoughts: false,
@@ -111,6 +128,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             imageQuality: imageQualitySelect.value,
             aspectRatio: aspectRatioSelect.value,
             imageStyle: imageStyleSelect.value,
+            openaiImageModel: imageModelByProvider.openai,
+            geminiImageModel: imageModelByProvider.gemini,
             enableImages: enableImagesToggle.checked,
             thinkingLevel: thinkingLevelSelect.value,
             includeThoughts: includeThoughtsInput.checked,
@@ -139,6 +158,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         imageQualitySelect.value = prefs.imageQuality || imageQualitySelect.value;
         aspectRatioSelect.value = prefs.aspectRatio || aspectRatioSelect.value;
         imageStyleSelect.value = prefs.imageStyle || imageStyleSelect.value;
+        imageModelByProvider = {
+            openai: typeof prefs.openaiImageModel === 'string' ? prefs.openaiImageModel : '',
+            gemini: typeof prefs.geminiImageModel === 'string' ? prefs.geminiImageModel : ''
+        };
+        imageModelProvider = null;
         enableImagesToggle.checked = prefs.enableImages !== undefined ? prefs.enableImages : true;
         thinkingLevelSelect.value = prefs.thinkingLevel || thinkingLevelSelect.value;
         includeThoughtsInput.checked = Boolean(prefs.includeThoughts);
@@ -164,7 +188,51 @@ document.addEventListener('DOMContentLoaded', async () => {
         copilotTempValueEl.textContent = temp.toFixed(1);
 
         updateProviderVisibility();
+        renderImageModelField();
         updateImageSettingsVisibility();
+    }
+
+    // ---------- Image model field ----------
+    function imageProviderKey(provider) {
+        return provider === 'gemini' ? 'gemini' : 'openai';
+    }
+
+    function defaultImageModelFor(provider) {
+        return imageProviderKey(provider) === 'gemini'
+            ? GEMINI_DEFAULT_IMAGE_MODEL
+            : OPENAI_DEFAULT_IMAGE_MODEL;
+    }
+
+    // Must run before the field is re-pointed at another provider, otherwise
+    // the value typed for the old provider is lost (or worse, attributed to
+    // the new one).
+    function captureImageModelField() {
+        if (imageModelProvider) {
+            imageModelByProvider[imageModelProvider] = imageModelInput.value.trim();
+        }
+    }
+
+    function renderImageModelField() {
+        const key = imageProviderKey(providerSelect.value);
+        imageModelProvider = key;
+        imageModelInput.value = imageModelByProvider[key] || '';
+
+        const fallback = defaultImageModelFor(key);
+        imageModelInput.placeholder = fallback;
+        imageModelHint.textContent = `Any model your endpoint supports. Leave empty to use ${fallback}.`;
+
+        imageModelSuggestions.innerHTML = '';
+        for (const id of IMAGE_MODEL_SUGGESTIONS[key] || []) {
+            const opt = document.createElement('option');
+            opt.value = id;
+            imageModelSuggestions.appendChild(opt);
+        }
+    }
+
+    function getSelectedImageModel(provider) {
+        captureImageModelField();
+        const key = imageProviderKey(provider);
+        return imageModelByProvider[key] || defaultImageModelFor(key);
     }
 
     function populateModelSelect(selectEl, modelIds, selected, fallback) {
@@ -219,7 +287,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     ].forEach(el => {
         el.addEventListener('change', () => {
             if (el === providerSelect) {
+                captureImageModelField();
                 updateProviderVisibility();
+                renderImageModelField();
                 updateImageSettingsVisibility();
                 if (providerSelect.value === 'copilot' && copilotApiKeyInput.value.trim()) {
                     loadCopilotModels();
@@ -231,6 +301,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             savePreferences();
         });
+    });
+
+    imageModelInput.addEventListener('input', captureImageModelField);
+    imageModelInput.addEventListener('change', () => {
+        captureImageModelField();
+        savePreferences();
     });
 
     openaiBaseUrlInput.addEventListener('change', () => {
@@ -534,7 +610,10 @@ Return strictly as a JSON object with keys "review" and "image_prompt".`;
     }
 
     async function generateImageViaGemini(apiKey, promptText, options) {
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key=${apiKey}`;
+        // Tolerate the "models/<id>" form so a value copied straight out of the
+        // Gemini docs still resolves.
+        const model = ((options.imageModel || '').trim() || GEMINI_DEFAULT_IMAGE_MODEL).replace(/^models\//, '');
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
         const styleMap = {
             photorealistic: 'photorealistic, real-life details, natural textures',
@@ -576,7 +655,7 @@ Return strictly as a JSON object with keys "review" and "image_prompt".`;
         });
         if (!response.ok) {
             const errData = await response.json().catch(() => ({}));
-            throw new Error(errData.error?.message || 'Gemini image request failed');
+            throw new Error(errData.error?.message || `Gemini image request failed for model "${model}"`);
         }
 
         const data = await response.json();
@@ -588,7 +667,7 @@ Return strictly as a JSON object with keys "review" and "image_prompt".`;
                 return base64ToBlob(inlineData.data, mimeType);
             }
         }
-        throw new Error('No image returned from Gemini.');
+        throw new Error(`No image returned from Gemini model "${model}".`);
     }
 
     // ---------- Provider: OpenAI / compatible ----------
@@ -674,44 +753,66 @@ Return strictly as a JSON object with keys "review" and "image_prompt".`;
         }
     }
 
-    function aspectRatioToOpenAISize(ratio) {
-        // OpenAI's images endpoint supports a limited set; map to nearest.
+    const LANDSCAPE_RATIOS = ['16:9', '21:9', '3:2', '4:3', '5:4', '4:1', '8:1'];
+    const PORTRAIT_RATIOS = ['9:16', '2:3', '3:4', '4:5', '1:4', '1:8'];
+
+    function aspectRatioToOpenAISize(ratio, family) {
+        // Image endpoints only accept a fixed set of sizes; map to the nearest.
         const r = (ratio || '1:1').trim();
-        if (r === '16:9' || r === '21:9' || r === '3:2' || r === '4:3' || r === '5:4' || r === '4:1' || r === '8:1') return '1536x1024';
-        if (r === '9:16' || r === '2:3' || r === '3:4' || r === '4:5' || r === '1:4' || r === '1:8') return '1024x1536';
+        if (family === 'dall-e-3') {
+            if (LANDSCAPE_RATIOS.includes(r)) return '1792x1024';
+            if (PORTRAIT_RATIOS.includes(r)) return '1024x1792';
+            return '1024x1024';
+        }
+        if (family === 'dall-e-2') return '1024x1024';
+        if (LANDSCAPE_RATIOS.includes(r)) return '1536x1024';
+        if (PORTRAIT_RATIOS.includes(r)) return '1024x1536';
         return '1024x1024';
     }
 
-    async function generateImageViaOpenAI(apiKey, baseUrl, promptText, options) {
-        const styleMap = {
-            photorealistic: 'photorealistic, real-life details, natural textures',
-            cinematic: 'cinematic composition, dramatic lighting, wide dynamic range',
-            'golden-hour': 'golden hour sunlight, warm tones, soft glow',
-            'night-vibrant': 'vibrant night scene, neon accents, rich contrast'
-        };
-        const styleHint = styleMap[options.imageStyle] || styleMap.photorealistic;
-        const fullPrompt = `${promptText}. Style guidance: ${styleHint}`;
-        const quality = (options.imageQuality === '2K' || options.imageQuality === '4K') ? 'high' : 'medium';
+    function openAIImageFamily(model) {
+        const m = (model || '').toLowerCase();
+        if (m.startsWith('dall-e-3')) return 'dall-e-3';
+        if (m.startsWith('dall-e-2')) return 'dall-e-2';
+        return 'default';
+    }
 
+    function buildOpenAIImagePayload(model, prompt, options) {
+        const family = openAIImageFamily(model);
+        const wantsHighQuality = options.imageQuality === '2K' || options.imageQuality === '4K';
+        const payload = { model, prompt, n: 1, size: aspectRatioToOpenAISize(options.aspectRatio, family) };
+
+        // dall-e-2 rejects `quality` entirely; dall-e-3 uses standard/hd where
+        // gpt-image-1 (and most compatible endpoints) use medium/high.
+        if (family === 'dall-e-3') {
+            payload.quality = wantsHighQuality ? 'hd' : 'standard';
+        } else if (family !== 'dall-e-2') {
+            payload.quality = wantsHighQuality ? 'high' : 'medium';
+        }
+        return payload;
+    }
+
+    async function requestOpenAIImage(apiKey, baseUrl, payload) {
         const response = await fetch(`${baseUrl}/images/generations`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiKey}`
             },
-            body: JSON.stringify({
-                model: 'gpt-image-1',
-                prompt: fullPrompt,
-                n: 1,
-                size: aspectRatioToOpenAISize(options.aspectRatio),
-                quality
-            })
+            body: JSON.stringify(payload)
         });
         if (!response.ok) {
             const errData = await response.json().catch(() => ({}));
-            throw new Error(errData.error?.message || 'OpenAI image request failed');
+            const message = errData.error?.message || errData.message
+                || `Image request failed for model "${payload.model}" (HTTP ${response.status})`;
+            const error = new Error(message);
+            error.status = response.status;
+            throw error;
         }
-        const data = await response.json();
+        return response.json();
+    }
+
+    async function extractOpenAIImageBlob(data) {
         const item = data?.data?.[0] || {};
 
         // Some endpoints return inline base64, others return a hosted URL.
@@ -729,6 +830,55 @@ Return strictly as a JSON object with keys "review" and "image_prompt".`;
 
         const keys = Object.keys(item).join(', ') || Object.keys(data || {}).join(', ');
         throw new Error(`No image in response (got keys: ${keys || 'none'}).`);
+    }
+
+    // A free-text model means a typo also lands as a 400, and shedding
+    // parameters can never fix that - fail fast instead of retrying.
+    function isUnsupportedParamError(message) {
+        const m = (message || '').toLowerCase();
+        const aboutModel = m.includes('model');
+        const missing = /(not found|does not exist|unknown|no such|not available|unsupported model|invalid model)/.test(m);
+        return !(aboutModel && missing);
+    }
+
+    async function generateImageViaOpenAI(apiKey, baseUrl, promptText, options) {
+        const styleMap = {
+            photorealistic: 'photorealistic, real-life details, natural textures',
+            cinematic: 'cinematic composition, dramatic lighting, wide dynamic range',
+            'golden-hour': 'golden hour sunlight, warm tones, soft glow',
+            'night-vibrant': 'vibrant night scene, neon accents, rich contrast'
+        };
+        const styleHint = styleMap[options.imageStyle] || styleMap.photorealistic;
+        const fullPrompt = `${promptText}. Style guidance: ${styleHint}`;
+        const model = (options.imageModel || '').trim() || OPENAI_DEFAULT_IMAGE_MODEL;
+
+        const payload = buildOpenAIImagePayload(model, fullPrompt, options);
+
+        // An arbitrary model on an arbitrary compatible endpoint may reject the
+        // optional knobs, so shed them one at a time before giving up.
+        const attempts = [payload];
+        if ('quality' in payload) {
+            const { quality, ...withoutQuality } = payload;
+            attempts.push(withoutQuality);
+        }
+        const { quality: _q, size: _s, ...minimal } = payload;
+        attempts.push(minimal);
+
+        let lastError;
+        for (const attempt of attempts) {
+            try {
+                const data = await requestOpenAIImage(apiKey, baseUrl, attempt);
+                return await extractOpenAIImageBlob(data);
+            } catch (error) {
+                lastError = error;
+                // Only a rejected-parameter error is worth retrying; auth, rate
+                // limit, missing endpoint and server errors are not.
+                const retriable = (error.status === 400 || error.status === 422)
+                    && isUnsupportedParamError(error.message);
+                if (!retriable) throw error;
+            }
+        }
+        throw lastError;
     }
 
     // ---------- Helpers ----------
@@ -834,6 +984,7 @@ Return strictly as a JSON object with keys "review" and "image_prompt".`;
             imageStyle: imageStyleSelect.value,
             aspectRatio: aspectRatioSelect.value,
             imageQuality: imageQualitySelect.value,
+            imageModel: getSelectedImageModel(provider),
             useWebGrounding: useWebGroundingInput.checked,
             useImageGrounding: useImageGroundingInput.checked
         };
