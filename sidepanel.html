@@ -211,6 +211,102 @@
         input:checked + .slider:before {
             transform: translateX(16px);
         }
+        .inline-check {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: 500;
+            color: var(--text);
+            font-size: 13px;
+            margin-bottom: 0;
+        }
+        .inline-check input {
+            width: auto;
+            margin: 0;
+            flex: none;
+        }
+        .badge {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: #e8f0fe;
+            color: var(--primary);
+        }
+        .badge.warn {
+            background: #fce8e6;
+            color: #d93025;
+        }
+        .place-meta {
+            margin-top: 6px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        .notice {
+            font-size: 12px;
+            padding: 8px 10px;
+            border-radius: 4px;
+            background: #fef7e0;
+            color: #7f6000;
+            border: 1px solid #fde293;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+        .notice button {
+            width: auto;
+            padding: 3px 8px;
+            font-size: 11px;
+            background: #f9ab00;
+        }
+        .variant-tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 6px;
+            flex-wrap: wrap;
+        }
+        .variant-tab {
+            width: auto;
+            padding: 4px 10px;
+            font-size: 12px;
+            background: #e8eaed;
+            color: #202124;
+        }
+        .variant-tab.active {
+            background: var(--primary);
+            color: white;
+        }
+        .history-entry {
+            border-bottom: 1px solid var(--border);
+            padding: 8px 0;
+            font-size: 12px;
+        }
+        .history-entry:last-child {
+            border-bottom: none;
+        }
+        .history-entry .h-place {
+            font-weight: 600;
+            color: var(--text);
+        }
+        .history-entry .h-text {
+            color: #5f6368;
+            margin: 4px 0;
+            line-height: 1.4;
+        }
+        .row-buttons {
+            display: flex;
+            gap: 6px;
+        }
+        .row-buttons button {
+            width: auto;
+            flex: 1;
+            padding: 6px;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
@@ -227,9 +323,23 @@
                     <option value="copilot">Copilot Proxy</option>
                 </select>
             </div>
-            <div class="field-group" id="geminiKeyGroup">
-                <label for="apiKey">Gemini API Key (Saved locally)</label>
-                <input type="password" id="apiKey" placeholder="Enter your Gemini API key...">
+            <div id="geminiSection">
+                <div class="field-group" id="geminiKeyGroup">
+                    <label for="apiKey">Gemini API Key (Saved locally)</label>
+                    <input type="password" id="apiKey" placeholder="Enter your Gemini API key...">
+                </div>
+                <div class="field-group">
+                    <label for="geminiModel">Text Model</label>
+                    <input type="text" id="geminiModel" list="geminiModelSuggestions" placeholder="gemini-2.5-flash"
+                           autocomplete="off" autocapitalize="off" spellcheck="false">
+                    <datalist id="geminiModelSuggestions">
+                        <option value="gemini-2.5-flash"></option>
+                        <option value="gemini-2.5-pro"></option>
+                        <option value="gemini-2.5-flash-lite"></option>
+                        <option value="gemini-3-pro-preview"></option>
+                    </datalist>
+                    <p class="helper-text">Free text. Leave empty to use gemini-2.5-flash.</p>
+                </div>
             </div>
             <div class="hidden" id="openaiSection">
                 <div class="field-group">
@@ -287,9 +397,15 @@
             <label style="margin: 0;">Detected Place</label>
             <button id="refreshPlaceBtn" style="width: auto; padding: 4px 8px; font-size: 11px; background: #e8eaed; color: #202124; margin: 0;">Refresh Data</button>
         </div>
+        <div id="placeChangedBanner" class="notice hidden">
+            <span id="placeChangedText">The map moved to a different place.</span>
+            <button id="placeChangedReload" type="button">Load it</button>
+        </div>
         <div class="place-info">
             <strong id="placeName">Loading...</strong>
             <span id="placeAddress"></span>
+            <div class="place-meta" id="placeMeta"></div>
+            <p class="helper-text hidden" id="placeGaps"></p>
         </div>
     </div>
 
@@ -341,15 +457,37 @@
                 </select>
             </div>
             <div class="field-group">
+                <label for="variantCount">Variants to Generate</label>
+                <select id="variantCount">
+                    <option value="1" selected>1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                </select>
+                <p class="helper-text">Generate several drafts in one go and pick the best.</p>
+            </div>
+            <div class="field-group">
+                <label for="polishLevel">Polish: <span id="polishValue">Natural</span></label>
+                <input type="range" id="polishLevel" min="0" max="100" step="25" value="50">
+                <p class="helper-text">Lower is rougher and more human (typos, lowercase, fragments). Higher is cleaner and more edited.</p>
+            </div>
+            <div class="field-group">
                 <label for="thinkingLevel">Thinking Level</label>
                 <select id="thinkingLevel">
                     <option value="minimal" selected>Minimal</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
                     <option value="high">High</option>
                 </select>
+                <p class="helper-text" id="thinkingHint"></p>
             </div>
             <div class="field-group">
-                <label>
-                    <input type="checkbox" id="includeThoughts"> Include thoughts in response
+                <label class="inline-check">
+                    <input type="checkbox" id="includeThoughts"> Show the model's reasoning
+                </label>
+            </div>
+            <div class="field-group">
+                <label class="inline-check">
+                    <input type="checkbox" id="avoidRepeats" checked> Avoid reusing phrasing from recent reviews
                 </label>
             </div>
             <div class="field-group">
@@ -409,18 +547,54 @@
                 </select>
             </div>
             <div class="field-group">
-                <label>
-                    <input type="checkbox" id="useWebGrounding"> Ground image with Google web results
+                <label class="inline-check">
+                    <input type="checkbox" id="varyImages" checked> Vary the shot for each image
                 </label>
+                <p class="helper-text">Without this, every image uses the identical prompt and they come back near-identical.</p>
             </div>
+            <div id="groundingGroup">
+                <div class="field-group">
+                    <label class="inline-check">
+                        <input type="checkbox" id="useWebGrounding"> Ground image with Google web results
+                    </label>
+                </div>
+                <div class="field-group">
+                    <label class="inline-check">
+                        <input type="checkbox" id="useImageGrounding"> Ground image with Google image results
+                    </label>
+                </div>
+            </div>
+            <p class="helper-text hidden" id="groundingHint"></p>
             <div class="field-group">
-                <label>
-                    <input type="checkbox" id="useImageGrounding"> Ground image with Google image results
+                <label class="inline-check">
+                    <input type="checkbox" id="usePlacePhotos"> Use the place's own photos as reference
                 </label>
+                <p class="helper-text" id="placePhotosHint">Pulls photos off the Maps page so the result resembles the real venue.</p>
             </div>
             <div class="field-group">
                 <label for="referenceImages">Reference Images (optional)</label>
                 <input type="file" id="referenceImages" accept="image/*" multiple>
+                <p class="helper-text" id="referenceImagesHint"></p>
+            </div>
+            <div class="field-group">
+                <label class="inline-check">
+                    <input type="checkbox" id="stripMetadata" checked> Strip metadata before download
+                </label>
+            </div>
+            <div class="field-group">
+                <label class="inline-check">
+                    <input type="checkbox" id="autoDownloadImages"> Download images automatically
+                </label>
+            </div>
+            <div class="field-group">
+                <label class="inline-check">
+                    <input type="checkbox" id="uploadToImgbb"> Upload images to ImgBB
+                </label>
+                <p class="helper-text">Off by default: uploading puts the image on a public host.</p>
+            </div>
+            <div class="field-group hidden" id="imgbbKeyGroup">
+                <label for="imgbbApiKey">ImgBB API Key</label>
+                <input type="password" id="imgbbApiKey" placeholder="Your ImgBB API key">
             </div>
         </div>
 
@@ -429,22 +603,47 @@
     </div>
 
     <div id="resultsCard" class="card hidden">
+        <div class="field-group hidden" id="staleResultsBanner">
+            <div class="notice">
+                <span id="staleResultsText"></span>
+            </div>
+        </div>
         <div class="field-group" id="reviewOutputContainer">
-            <label for="reviewOutput">Generated Review</label>
-            <textarea id="reviewOutput" readonly></textarea>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <label for="reviewOutput" style="margin: 0;">Generated Review</label>
+                <span class="badge hidden" id="ratingBadge"></span>
+            </div>
+            <div class="variant-tabs hidden" id="variantTabs"></div>
+            <textarea id="reviewOutput"></textarea>
+            <p class="helper-text" id="reviewMeta"></p>
             <button id="autoPasteBtn" style="margin-top: 8px; background-color: #0f9d58;">✨ Auto-Paste to Maps</button>
             <button id="copyReviewBtn" style="margin-top: 8px; background-color: #5f6368;">Copy Review</button>
         </div>
+        <div class="field-group hidden" id="thoughtsContainer">
+            <label for="thoughtsOutput">Model Reasoning</label>
+            <textarea id="thoughtsOutput" readonly style="min-height: 60px; font-size: 12px; color: #5f6368;"></textarea>
+        </div>
         <div class="field-group" id="promptOutputContainer">
             <label for="promptOutput">Image Generation Prompt</label>
-            <textarea id="promptOutput" readonly></textarea>
+            <textarea id="promptOutput"></textarea>
+            <p class="helper-text">Editable. Change it and re-render without regenerating the review.</p>
+            <button id="regenerateImagesBtn" style="margin-top: 4px; background-color: #5f6368;">Re-render Images</button>
         </div>
-        
+
         <div id="imagesContainer" class="field-group preview-container">
             <!-- Images will be injected here -->
         </div>
     </div>
 
+    <div class="card">
+        <button class="accordion" id="historyAccordion">Recent Generations</button>
+        <div class="panel" id="historyPanel">
+            <div id="historyList" style="margin-top: 8px;"></div>
+            <button id="clearHistoryBtn" style="background: #e8eaed; color: #202124; margin-bottom: 10px;">Clear History</button>
+        </div>
+    </div>
+
+    <script src="maps-url.js"></script>
     <script src="sidepanel.js"></script>
 </body>
 </html>

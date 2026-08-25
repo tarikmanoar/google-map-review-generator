@@ -1,3 +1,7 @@
+importScripts('maps-url.js');
+
+const { isMapsUrl } = self.MapsUrl;
+
 const SIDE_PANEL_PATH = 'sidepanel.html';
 const DEFAULT_TITLE = 'Open Maps AI Review';
 const OFF_MAPS_TITLE = 'Maps AI Review works on Google Maps only';
@@ -7,24 +11,6 @@ const OFF_MAPS_TITLE = 'Maps AI Review works on Google Maps only';
 // already-open panel). Resets whenever the service worker restarts, which is
 // harmless: the next event just re-applies the correct state.
 const appliedState = new Map();
-
-function isMapsUrl(url) {
-    if (!url) return false;
-    let parsed;
-    try {
-        parsed = new URL(url);
-    } catch (_) {
-        return false;
-    }
-    if (parsed.protocol !== 'https:') return false;
-
-    const host = parsed.hostname;
-    // maps.google.com, maps.google.co.uk, ...
-    if (/^maps\.google\.[a-z]{2,}(\.[a-z]{2,})?$/.test(host)) return true;
-    // google.com/maps, www.google.com.bd/maps, ...
-    if (!/^(www\.)?google\.[a-z]{2,}(\.[a-z]{2,})?$/.test(host)) return false;
-    return parsed.pathname === '/maps' || parsed.pathname.startsWith('/maps/');
-}
 
 async function applyPanelState(tabId, url) {
     if (typeof tabId !== 'number' || tabId === chrome.tabs.TAB_ID_NONE) return;
