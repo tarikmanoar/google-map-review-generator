@@ -130,6 +130,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const refreshPlaceBtn = document.getElementById('refreshPlaceBtn');
     const keepPanelOpenInput = document.getElementById('keepPanelOpen');
     const offMapsBanner = document.getElementById('offMapsBanner');
+    const videoPromptContainer = document.getElementById('videoPromptContainer');
+    const videoPromptOutput = document.getElementById('videoPromptOutput');
+    const copyVideoPromptBtn = document.getElementById('copyVideoPromptBtn');
+    const rebuildVideoPromptBtn = document.getElementById('rebuildVideoPromptBtn');
 
     let currentPlaceInfo = null;
     // The single Image Model input is shared by both image-capable providers,
@@ -146,6 +150,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // The place the on-screen results belong to, so we can flag them as stale
     // once the map moves somewhere else.
     let resultsPlaceKey = null;
+    // The video prompt is derived, so it is rebuilt whenever its inputs change -
+    // except once the user has typed into it, which would silently discard their
+    // edit. The Rebuild button is the way back.
+    let videoPromptDirty = false;
     // Files the user picked, decoded once and reused across images.
     let userReferenceImages = [];
     let imgbbApiKey = DEFAULT_IMGBB_API_KEY;
@@ -434,6 +442,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     applyPreferences();
 
+    // Persona is the one the user explicitly asked to drive the video prompt;
+    // the rest change the framing the same way they change the image.
+    const VIDEO_PROMPT_INPUTS = [personaStyleSelect, sentimentSelect, aspectRatioSelect, imageStyleSelect, languageModeSelect];
+
     [
         providerSelect, sentimentSelect, personaStyleSelect, languageModeSelect, lengthSelect,
         imageCountInput, imageQualitySelect, aspectRatioSelect, imageStyleSelect,
@@ -459,6 +471,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (el === uploadToImgbbInput) {
                 updateImgbbVisibility();
             }
+            if (VIDEO_PROMPT_INPUTS.indexOf(el) !== -1) refreshVideoPrompt();
             savePreferences();
         });
     });
@@ -952,6 +965,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         thoughtsOutput.value = '';
         ratingBadge.classList.add('hidden');
         reviewMeta.textContent = '';
+        videoPromptOutput.value = '';
+        videoPromptDirty = false;
+        videoPromptContainer.classList.add('hidden');
         currentVariants = [];
         activeVariantIndex = 0;
         resultsPlaceKey = null;
@@ -1264,6 +1280,194 @@ Task: Write ${count === 1 ? 'one authentic, human-like' : `${count} distinct aut
         return parts.filter(Boolean).join('. ');
     }
 
+    // ---------- Video prompt ----------
+    // Veo, Sora, Kling, Runway and Hailuo all read the opening sentence hardest
+    // and then a short labelled block, so the prompt is emitted as one standalone
+    // hook line followed by "Label: value" lines. It is composed here instead of
+    // asked of the model: the persona dropdown can then rebuild it instantly, for
+    // free, and it still works when image generation is switched off.
+    const VIDEO_PERSONA_SHOTS = {
+        'Local Guide': {
+            hook: 'A local walking someone through',
+            subject: 'one local resident in everyday clothes, filmed from behind or over the shoulder so the face never reads clearly, other people soft in the background',
+            rig: 'handheld at chest height with honest micro-shake, 35mm, deep enough focus that the whole room reads',
+            camera: 'a continuous walking tracking shot that drifts past the frontage then pushes through the entrance in one unbroken move',
+            action: '0-2s the frontage and the street it sits on; 2-5s they step through the doorway and the exposure rolls from daylight to interior light; 5-8s the walk slows and settles on the one detail the place is known for',
+            audio: 'location sound only - street noise crossfading to room tone, real overlapping chatter, footsteps, a door',
+            scene: 'the entrance and the space just inside, lived-in and everyday',
+            avoid: 'crowd faces in sharp focus'
+        },
+        'Food Critic': {
+            hook: 'Close-up food cinematography of a plated dish at',
+            subject: 'the dish is the subject - no full person in frame, at most one pair of anonymous hands entering from the right, cropped at the forearm, no face',
+            rig: 'motorised slider on a locked tripod head, 85mm macro at T2.0, very shallow depth of field at plate height',
+            camera: 'a slow lateral slider push across the plate holding focus on the hero element - no handheld, no orbit, no zoom',
+            action: '0-2s extreme macro on surface texture, glaze and crumb catching the light; 2-5s the slider pulls back to reveal the whole plate with steam curling through the backlight; 5-8s hands enter and make one decisive move - a cut, a lift, a pour - and the focus racks to follow it',
+            audio: 'close dry foley - cutlery on ceramic, crust cracking, a low sizzle from the pass, dining-room chatter pushed two rooms back, no music and no speech',
+            scene: 'a table setting in the dining room, blurred seating behind',
+            avoid: 'duplicated cutlery, food morphing'
+        },
+        Traveler: {
+            hook: 'A solo travel vlogger filming themselves at',
+            subject: 'one solo traveler with a small backpack, arm extended holding a compact camera mounted on a handheld three-axis gimbal with a visible joystick thumb-control, framed at arm\'s length, face angled away so it never reads clearly',
+            rig: 'the gimbal glide itself - floaty, weightless, zero shake, 18mm wide with a slight barrel bend and walking bob',
+            camera: 'a smooth gimbal-stabilised forward walk plus one joystick whip-pan that swings the frame off the traveler and across the location before easing part-way back',
+            action: '0-2s the traveler at arm\'s length talking to the lens while the place moves behind them; 2-5s the joystick pan sweeps off them and across the busiest layer of the location, sun flaring through; 5-8s the gimbal keeps pushing forward and settles on a human-scale detail with the traveler\'s shoulder still in the bottom of frame',
+            audio: 'dense on-location ambience with light wind on the mic and footsteps; the traveler says one short unscripted line to camera, low in the mix, not lip-synced',
+            scene: 'the approach and the busiest part of the place',
+            avoid: 'crowd faces in sharp focus, camera floating detached from the hand',
+            speaks: true
+        },
+        'Family Visitor': {
+            hook: 'A parent and child spending an afternoon at',
+            subject: 'one adult and one child at mid-distance, both seen from behind, faces never turned toward camera, the frame cluttered and warm rather than composed',
+            rig: 'one-handed phone at chest height with no stabiliser - genuine shake, a horizon off by a degree, one autofocus hunt, 26mm and everything sharp',
+            camera: 'a loose reactive pan following whoever is moving, then a tilt down to child height and back up with a small overshoot',
+            action: '0-2s wide of the group settling in, a subject drifting off-centre before the operator recentres; 2-5s a loose pan across the table or the space; 5-8s a tilt down to something at kid height then a rushed tilt back up as the shot ends mid-move',
+            audio: 'overlapping family chatter with a child\'s laugh over the top, chairs scraping, venue music leaking in tinny and distant, voices unintelligible and no scripted dialogue',
+            scene: 'an open area with room to walk, seating along one side',
+            avoid: 'distorted child proportions, merging figures'
+        },
+        'Business Visitor': {
+            hook: 'A professional settling in to work at',
+            subject: 'one person in smart clothing at mid-shot from behind or three-quarters back, laptop bag and coffee, no face toward camera',
+            rig: 'tripod, 35mm, clean and steady, no shake',
+            camera: 'a slow push in, or locked off while the subject moves through the frame',
+            action: '0-2s the corner of the room, clean lines and empty table; 2-5s they set a laptop and a coffee down and sit; 5-8s the push settles as steam rises from the cup and the screen glow lands on their hands',
+            audio: 'quiet room tone - low keyboard clicks, a distant espresso machine, no speech',
+            scene: 'a quiet corner table or lobby seating, clean lines',
+            avoid: 'duplicated laptop screens, legible screen text'
+        }
+    };
+
+    // Sentiment never changes the rig, only the set dressing and the pace.
+    const VIDEO_MOOD_HINTS = {
+        Positive: { pace: '', dressing: 'warm and cared-for, everything in its place' },
+        Average: { pace: ', unhurried', dressing: 'ordinary and a little worn, nothing staged' },
+        Negative: { pace: ', slower and flatter', dressing: 'tired surfaces, harsh flat light, empty seats' },
+        Funny: { pace: ', held a beat too long', dressing: 'one small absurd detail left in the frame' }
+    };
+
+    const VIDEO_GRADE_HINTS = {
+        photorealistic: 'natural available light, true colour, no grade',
+        cinematic: 'cinematic contrast, shaped key light, wide dynamic range',
+        'golden-hour': 'low golden-hour sun, long shadows, warm haze',
+        'night-vibrant': 'after dark, practical and neon sources, rich saturated shadows'
+    };
+
+    // Negated nouns still summon what they name, so these live on a detachable
+    // trailing line meant for the tool's own negative-prompt field.
+    const VIDEO_BASE_AVOID = ['readable text', 'watermark', 'subtitles', 'extra limbs', 'warped hands', 'sudden cuts'];
+
+    const cleanVideoText = value => String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+
+    // The street number and the post code are noise; the city is a look cue.
+    function videoLocality(placeInfo) {
+        const address = (placeInfo || {}).address && placeInfo.address !== 'Address not found' ? String(placeInfo.address) : '';
+        return address
+            .split(',')
+            .map(part => part.trim().replace(/\s+\d[\d-]*$/, ''))
+            .filter(part => part && !/^[\d\s-]+$/.test(part))
+            .slice(-2)
+            .join(', ');
+    }
+
+    // "a Bangladeshi restaurant", or just "a venue" when the scraper missed it.
+    function videoVenuePhrase(placeInfo) {
+        const category = cleanVideoText((placeInfo || {}).category);
+        if (!category || category === 'Not specified') return 'a venue';
+        return `${/^[aeiou]/i.test(category) ? 'an' : 'a'} ${category}`;
+    }
+
+    // Video models take a handful of ratios; the image dropdown offers shapes like
+    // 8:1 that none of them accept, so the ratio is bucketed rather than echoed.
+    function videoAspect(aspectRatio) {
+        const [w, h] = String(aspectRatio || '1:1').split(':').map(Number);
+        const r = (w > 0 && h > 0) ? w / h : 1;
+        // 4:3 and wider is landscape; 4:5 and taller is the portrait crop social
+        // video actually uses. Everything between reads as square.
+        if (r >= 1.3) return { ratio: '16:9', framing: 'Widescreen framing, the space readable around the subject.' };
+        if (r <= 0.8) return { ratio: '9:16', framing: 'Vertical framing, subject centred with headroom above.' };
+        return { ratio: '1:1', framing: 'Square framing, subject centred.' };
+    }
+
+    // The model already wrote the image prompt to match the review's atmosphere,
+    // so it makes the best scene bed - but its still-photography vocabulary fights
+    // the Camera line and has to come out first.
+    function videoSceneBed(imagePrompt, placeInfo, persona) {
+        const bed = cleanVideoText(imagePrompt)
+            .replace(/\bstyle guidance:[^.]*/gi, '')
+            .replace(/\b(shot on|captured with|photographed (?:on|with))[^.,;]*/gi, '')
+            .replace(/\b(4k|8k|ultra[- ]?hd|highly detailed|masterpiece|best quality|award[- ]winning|dslr|hdr|sharp focus|bokeh)\b/gi, '')
+            .split(/(?<=\.)\s+/).slice(0, 2).join(' ')
+            .replace(/\s{2,}/g, ' ')
+            .replace(/\s+([,.;])/g, '$1')
+            .replace(/^[\s,;.-]+|[\s,;.-]+$/g, '');
+        if (bed.length >= 15) return bed;
+
+        // Images can be switched off entirely, so fall back to the scraped facts.
+        const info = placeInfo || {};
+        const name = cleanVideoText(info.name);
+        const locality = videoLocality(info);
+        const price = cleanVideoText(info.priceLevel);
+        const tier = /^\${1,2}$/.test(price) ? 'casual and everyday' : /^\${3,4}$/.test(price) ? 'upscale and refined' : '';
+        const built = [
+            `${videoVenuePhrase(info)}${name ? ` called ${name}` : ''}`,
+            locality ? `in ${locality}` : '',
+            `- ${persona.scene}`
+        ].filter(Boolean).join(' ');
+        return tier ? `${built}, ${tier}` : built;
+    }
+
+    function composeVideoPrompt(personaStyle, placeInfo, imagePrompt, options) {
+        const persona = VIDEO_PERSONA_SHOTS[personaStyle] || VIDEO_PERSONA_SHOTS['Local Guide'];
+        const mood = VIDEO_MOOD_HINTS[options.sentiment] || VIDEO_MOOD_HINTS.Positive;
+        const grade = VIDEO_GRADE_HINTS[options.imageStyle] || VIDEO_GRADE_HINTS.photorealistic;
+        const { ratio, framing } = videoAspect(options.aspectRatio);
+        const info = placeInfo || {};
+
+        const locality = videoLocality(info);
+        const setting = [videoVenuePhrase(info), locality ? `in ${locality}` : ''].filter(Boolean).join(' ');
+        // A rating is a number with no visual; a review count is a crowd.
+        const crowd = Number(info.reviewCount) >= 500 ? 'busy, people moving through the frame' : '';
+
+        const lines = [`${persona.hook} ${setting}.`, ''];
+        const add = (label, value) => {
+            const v = cleanVideoText(value).replace(/[.,;\s]+$/, '');
+            if (v) lines.push(`${label}: ${v}.`);
+        };
+
+        add('Scene', [videoSceneBed(imagePrompt, info, persona), mood.dressing, crowd].filter(Boolean).join('; '));
+        add('Subject', persona.subject);
+        add('Camera', `${persona.camera}${mood.pace}. Rig: ${persona.rig}`);
+        add('Action', persona.action);
+        add('Lighting', grade);
+        add('Audio', persona.speaks && options.languageMode === 'en' ? `${persona.audio}, spoken in English`
+            : persona.speaks && options.languageMode === 'local' ? `${persona.audio}, spoken in the local language of the location`
+            : persona.audio);
+
+        lines.push('');
+        lines.push(`Single continuous 8-second take, no cuts. ${framing}`);
+        lines.push(`Avoid: ${VIDEO_BASE_AVOID.concat(persona.avoid).join(', ')}.`);
+        lines.push(`Set in your video tool: aspect ${ratio}${ratio === options.aspectRatio ? '' : ` (nearest supported to ${options.aspectRatio})`}, duration 8s, and paste the Avoid line into the negative-prompt field.`);
+        return lines.join('\n');
+    }
+
+    // Derived, so it is rebuilt whenever an input changes - except once the user
+    // has typed into it, which the Rebuild button is the way out of.
+    function refreshVideoPrompt() {
+        if (videoPromptDirty) return;
+        const variant = currentVariants[activeVariantIndex];
+        videoPromptOutput.value = (currentPlaceInfo && variant)
+            ? composeVideoPrompt(personaStyleSelect.value, currentPlaceInfo, promptOutput.value, {
+                sentiment: sentimentSelect.value,
+                imageStyle: imageStyleSelect.value,
+                aspectRatio: aspectRatioSelect.value,
+                languageMode: languageModeSelect.value
+            })
+            : '';
+        videoPromptContainer.classList.toggle('hidden', !videoPromptOutput.value);
+    }
     async function generateImageViaGemini(apiKey, promptText, options) {
         // Tolerate the "models/<id>" form so a value copied straight out of the
         // Gemini docs still resolves.
@@ -1775,6 +1979,8 @@ Task: Write ${count === 1 ? 'one authentic, human-like' : `${count} distinct aut
         Array.from(variantTabs.children).forEach((tab, i) => {
             tab.classList.toggle('active', i === index);
         });
+
+        refreshVideoPrompt();
     }
 
     function renderVariants() {
@@ -2014,6 +2220,8 @@ Task: Write ${count === 1 ? 'one authentic, human-like' : `${count} distinct aut
         statusMessage.classList.add('hidden');
         imagesContainer.innerHTML = '';
         promptOutput.value = '';
+        videoPromptOutput.value = '';
+        videoPromptDirty = false;
         thoughtsOutput.value = '';
         thoughtsContainer.classList.add('hidden');
 
@@ -2157,4 +2365,24 @@ Task: Write ${count === 1 ? 'one authentic, human-like' : `${count} distinct aut
             setTimeout(() => copyReviewBtn.textContent = 'Copy Review', 2000);
         });
     }
+
+    // ---------- Video prompt ----------
+    // The scene bed comes from the image prompt, so an edit there should carry
+    // through to the video prompt the same way it carries through to the images.
+    promptOutput.addEventListener('input', refreshVideoPrompt);
+
+    videoPromptOutput.addEventListener('input', () => { videoPromptDirty = true; });
+
+    rebuildVideoPromptBtn.addEventListener('click', () => {
+        videoPromptDirty = false;
+        refreshVideoPrompt();
+        rebuildVideoPromptBtn.textContent = 'Rebuilt';
+        setTimeout(() => rebuildVideoPromptBtn.textContent = 'Rebuild', 1500);
+    });
+
+    copyVideoPromptBtn.addEventListener('click', async () => {
+        const copied = await copyToClipboard(videoPromptOutput.value);
+        copyVideoPromptBtn.textContent = copied ? 'Copied!' : 'Copy failed';
+        setTimeout(() => copyVideoPromptBtn.textContent = 'Copy Video Prompt', 2000);
+    });
 });

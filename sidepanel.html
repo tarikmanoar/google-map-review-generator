@@ -640,6 +640,14 @@
             <button id="regenerateImagesBtn" style="margin-top: 4px; background-color: #5f6368;">Re-render Images</button>
         </div>
 
+        <div class="field-group hidden" id="videoPromptContainer">
+            <label for="videoPromptOutput">Video Generation Prompt</label>
+            <textarea id="videoPromptOutput"></textarea>
+            <p class="helper-text">Built locally from the persona style &mdash; nothing is sent anywhere. Copy it into Veo, Sora, Kling or Runway. Switching persona or editing the image prompt rebuilds it.</p>
+            <button id="copyVideoPromptBtn" style="margin-top: 4px; background-color: #5f6368;">Copy Video Prompt</button>
+            <button id="rebuildVideoPromptBtn" style="margin-top: 4px; background: #e8eaed; color: #202124;">Rebuild</button>
+        </div>
+
         <div id="imagesContainer" class="field-group preview-container">
             <!-- Images will be injected here -->
         </div>
