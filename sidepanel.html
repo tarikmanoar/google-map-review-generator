@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Maps AI Review</title>
+    <link rel="stylesheet" href="dropdown.css">
     <style>
         :root {
             --primary: #1a73e8;
@@ -663,5 +664,8 @@
 
     <script src="maps-url.js"></script>
     <script src="sidepanel.js"></script>
+    <!-- After sidepanel.js, so the selects already hold their saved values
+         by the time they are enhanced. -->
+    <script src="dropdown.js"></script>
 </body>
 </html>

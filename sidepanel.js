@@ -11,8 +11,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Hints only - the field is free text, because an endpoint's /models list
     // rarely advertises its image models (and some chat models render images).
     const IMAGE_MODEL_SUGGESTIONS = {
-        openai: ['gpt-image-1', 'gpt-image-1-mini', 'dall-e-3', 'dall-e-2'],
-        gemini: ['gemini-3.1-flash-image-preview', 'gemini-2.5-flash-image-preview', 'imagen-4.0-generate-001']
+        openai: [
+            'gpt-image-1',
+            'gpt-image-1-mini',
+            'dall-e-3',
+            'dall-e-2',
+            'gemini-3.1-flash-image'
+        ],
+        gemini: [
+            "gemini-3.1-flash-image",
+            "gemini-3.1-flash-lite-image",
+            "gemini-3-pro-image",
+            "gemini-2.5-flash-image",
+            'gpt-image-1'
+        ]
     };
 
     const HISTORY_STORAGE_KEY = 'mapsReviewHistory';
